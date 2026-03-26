@@ -18,8 +18,15 @@ class MidasDepthEstimator:
         self.model.eval()
 
     def process(self, image):
-        # Convert BGR to RGB for MiDaS
-        original_image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        # 1. Apply CLAHE to the L channel of LAB color space to scientifically safely stabilize room lighting
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        cl = clahe.apply(l)
+        clahe_image = cv2.cvtColor(cv2.merge((cl, a, b)), cv2.COLOR_LAB2BGR)
+        
+        # 2. Convert to RGB for MiDaS
+        original_image_rgb = cv2.cvtColor(clahe_image, cv2.COLOR_BGR2RGB)
         img_input = self.transform({"image": original_image_rgb / 255.0})["image"]
         sample = torch.from_numpy(img_input).to(self.device).unsqueeze(0)
         
@@ -47,16 +54,19 @@ class MidasDepthEstimator:
         return float(np.median(roi))
         
     def get_rim_depth(self, depth_map, bbox):
-        """ Median depth within a small patch in the center of the bounding box """
+        """ Median depth within a horizontal strip along the physical lip of the cup """
         x1, y1, x2, y2 = bbox
-        cx = (x1 + x2) // 2
-        cy = (y1 + y2) // 2
         
-        patch_size = 10
-        px1 = max(x1, cx - patch_size)
-        px2 = min(x2, cx + patch_size)
-        py1 = max(y1, cy - patch_size)
-        py2 = min(y2, cy + patch_size)
+        # We sample the physical ceramic lip (just inside the bottom edge of the bounding box)
+        thickness_inward = max(4, (y2 - y1) // 10)
+        
+        # Take a wide horizontal strip across the cup rather than a tiny center dot
+        px1 = max(x1, x1 + (x2 - x1) // 4)
+        px2 = min(x2, x2 - (x2 - x1) // 4)
+        
+        # Sample just the bottom lip, pushing exactly 'thickness' pixels inward from the YOLO edge
+        py1 = max(y1, y2 - thickness_inward)
+        py2 = y2
         
         patch = depth_map[py1:py2, px1:px2]
         if patch.size == 0:
