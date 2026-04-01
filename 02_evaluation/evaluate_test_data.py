@@ -4,6 +4,7 @@ import cv2
 import yaml
 import numpy as np
 import json
+import math
 from datetime import datetime
 
 # Ensure project root is in path
@@ -147,6 +148,22 @@ def generate_report():
     mae = total_error / valid_count if valid_count > 0 else 0
     avg_floor_z = np.mean([d['pred_floor_z'] for d in report_data]) if report_data else 0
     
+    if valid_count > 0:
+        errors = [d['error'] for d in report_data]
+        error_pcts = [d['error_pct'] for d in report_data]
+        rmse = math.sqrt(sum(e**2 for e in errors) / valid_count)
+        
+        mean_error_signed = sum((d['pred_z'] - d['true_z']) for d in report_data) / valid_count
+        std_dev = math.sqrt(sum(((d['pred_z'] - d['true_z']) - mean_error_signed)**2 for d in report_data) / valid_count)
+        
+        mape = sum(error_pcts) / valid_count
+        
+        d_5mm = sum(1 for e in errors if e <= 0.5) / valid_count * 100
+        d_1cm = sum(1 for e in errors if e <= 1.0) / valid_count * 100
+        d_2cm = sum(1 for e in errors if e <= 2.0) / valid_count * 100
+    else:
+        rmse = std_dev = mape = d_5mm = d_1cm = d_2cm = 0.0
+    
     with open(report_path, 'w') as f:
         f.write(f"# MiDaS Depth Calibration: Final Validation Report\n")
         f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
@@ -159,8 +176,15 @@ def generate_report():
         f.write(f"| **Predicted Floor Z** | **{avg_floor_z:.2f} cm** |\n\n")
         
         f.write(f"## 2. Global Accuracy Summary\n")
-        f.write(f"- **Total Samples Validated**: {valid_count}\n")
-        f.write(f"- **Mean Absolute Error (MAE)**: **{mae:.2f} cm**\n\n")
+        f.write(f"| Metric | Value | Description |\n| :--- | :--- | :--- |\n")
+        f.write(f"| **Mean Absolute Error (MAE)** | **{mae:.2f} cm** | Average absolute distance off target. |\n")
+        f.write(f"| **Root Mean Sq Error (RMSE)** | **{rmse:.2f} cm** | Punishes severe outliers heavily. |\n")
+        f.write(f"| **Standard Deviation ($\sigma$)** | **{std_dev:.2f} cm** | Consistency of the error spread. |\n")
+        f.write(f"| **Mean Abs Pct Error (MAPE)** | **{mape:.1f}%** | Average percentage distance off target. |\n")
+        f.write(f"| **Strict ($\delta < 5mm$)** | **{d_5mm:.1f}%** | Predictions within 5mm of True Z. |\n")
+        f.write(f"| **Standard ($\delta < 1cm$)** | **{d_1cm:.1f}%** | Predictions within 10mm of True Z. |\n")
+        f.write(f"| **Loose ($\delta < 2cm$)** | **{d_2cm:.1f}%** | Predictions within 20mm of True Z. |\n")
+        f.write(f"| **Valid Test Set Frames** | **{valid_count}** | Total snapshots successfully evaluated. |\n\n")
         
         f.write(f"## 3. Individual Breakdown\n")
         f.write(f"| Snapshot | M_rim | M_tray | Ratio | True Z | Pred Z | Error % |\n")
