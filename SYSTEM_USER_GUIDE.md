@@ -58,8 +58,13 @@ Verify exactly how accurate your calibration is using the collected test dataset
 - Run: `python 02_evaluation/evaluate_test_data.py`
 - **Historical Tracking**: Each run creates a new **timestamped folder** (e.g., `evaluation_results/eval_20260401_120000/`). This prevents old results from being overwritten.
 - This script automatically scans your test dataset and compares the model's predictions vs your ground truth.
-- Open the **`validation_report.md`** inside the latest timestamped folder to see the full Error % table and visual evidence (side-by-side heatmap).
-- If the Error % is too high (>10%), recapture points in Step 2.
+- Open the **`validation_report.md`** inside the latest timestamped folder to see the visual evidence and the **Global Accuracy Summary** table.
+- **Understanding your Metrics**:
+  - **MAE**: The average raw distance (in cm) your predictions were off.
+  - **RMSE**: If this is much higher than your MAE, it means your AI has a few massive, catastrophic failures (outliers).
+  - **Std Dev ($\sigma$)**: If this is high, the AI's guesses are wildly erratic. If this is *low* but your MAE is high, you simply have a systematic offset and just need to re-calibrate your Alpha Multiplier.
+  - **MAPE**: Your system's average error represented as a percentage.
+  - **Strict/Standard/Loose ($\delta$ - Delta)**: Your hard "Success Rate" (e.g., "95% of cups were accurate within 1cm"). Use this as your pass/fail criteria for production.
 
 ### Step 5: Final Run (Production)
 Deploy the system for real-time volume estimation.

@@ -66,7 +66,31 @@ $$ Z_{smooth} = \lambda \cdot Z_{new} + (1 - \lambda) \cdot Z_{prev} $$
 
 ---
 
-## 6. Professional Workflow
+## 6. Academic Evaluation Metrics
+To ensure the depth engine is robust enough for industrial deployment, the evaluation pipeline generates a full academic grading suite. Given a predicted cup height $\hat{y}$ and a true measured height $y$ over $n$ evaluation snapshots:
+
+### 6.1 Mean Absolute Error (MAE)
+A simple, universally understood average of the distance off-target.
+$$ \text{MAE} = \frac{1}{n} \sum_{i=1}^n |\hat{y}_i - y_i| $$
+
+### 6.2 Root Mean Square Error (RMSE)
+Heavily punishes large outlier errors by squaring the error before averaging. In industrial terms, it mathematically proves the system doesn't have wild, catastrophic failures (like missing a cup entirely).
+$$ \text{RMSE} = \sqrt{ \frac{1}{n} \sum_{i=1}^n (\hat{y}_i - y_i)^2 } $$
+
+### 6.3 Standard Deviation of Error ($\sigma$)
+Measures the spread of the errors around the mean. A low $\sigma$ combined with a high MAE indicates a *systematic bias* (easily fixed by tuning the $\alpha$ multiplier). A high $\sigma$ indicates erratic, untrustworthy AI noise.
+$$ \sigma = \sqrt{ \frac{1}{n} \sum_{i=1}^n \left( (\hat{y}_i - y_i) - \text{Mean Error} \right)^2 } $$
+
+### 6.4 Mean Absolute Percentage Error (MAPE)
+Normalizes the error relative to the physical scale of the object. A millimeter of error on a tiny cup is heavily penalized compared to the same error on a massive jug.
+$$ \text{MAPE} = \frac{100\%}{n} \sum_{i=1}^n \left| \frac{\hat{y}_i - y_i}{y_i} \right| $$
+
+### 6.5 Delta Threshold Accuracy ($\delta$)
+Measures the strict percentage of predictions that perfectly fall within a designated tolerance threshold (e.g., $<5\text{mm}$, $<1\text{cm}$, $<2\text{cm}$). This provides a direct "Success Rate" metric for production deployment gating.
+
+---
+
+## 7. Professional Workflow
 | Phase | Tool | Goal |
 | :--- | :--- | :--- |
 | **Diagnostics** | `03_diagnostics/detect_camera_height_midas.py` | Verify AI stability and sensor noise. |
