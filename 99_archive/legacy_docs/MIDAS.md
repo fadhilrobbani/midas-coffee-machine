@@ -6,7 +6,7 @@ This document serves as a comprehensive guide and reference designed for both hu
 This system estimates the volume of a cup using a **single RGB camera** combined with:
 1. **YOLOv8** for 2D cup rim detection and bounding box extraction.
 2. **MiDaS (v2.1 Small 256)** for dense relative depth estimation.
-3. **Geometric Math & Polynomial Regression** to convert relative depth and 2D bounding boxes into physical attributes (Z-distance, cup height, real width, and volume).
+3. **Geometric Math & Linear Inverse Regression** to convert relative depth and 2D bounding boxes into physical attributes (Z-distance, cup height, real width, and volume).
 
 ## Directory Structure
 The core logic has been refactored into a clear, modular package located in `midas_volumecup/`:
@@ -17,7 +17,7 @@ The core logic has been refactored into a clear, modular package located in `mid
 - **`midas_volumecup/detector.py`**: Wraps YOLOv8s.
   - Loads `weights/cup_detection_v3_12_s_best.pt`, exclusively detecting class `0` (cup rim).
 - **`midas_volumecup/volume_math.py`**: Pure math functions.
-  - **`calculate_z_rim`**: Uses an offline-calibrated quadratic polynomial ($a*r^2 + b*r + c$) where $r = M_{rim} / M_{tray}$ to compute the true physical distance ($Z_{rim}$) in cm.
+  - **`calculate_z_rim`**: Uses an offline-calibrated linear regression on an inverted axis ($a*(1/r) + c$) where $r = M_{rim} / M_{tray}$ to compute the true physical distance ($Z_{rim}$) in cm. This physics-grounded model replaces fragile quadratic polynomials.
   - **`calculate_volume`**: Derives Cup Height ($H_{cup} = H_{nozzle} - Z_{rim}$), Actual physical width of the rim ($W_{real}$ using focal length), and ultimately the physical volume using a simple cylinder formula.
 
 ## Executable Scripts and Workflow
@@ -42,15 +42,15 @@ The script needs to understand how pixels on your specific camera correlate to r
 4. Click **Capture & Select ROI Object**.
 5. A pop-up OpenCV window will appear showing the captured frame. Click and drag your mouse to draw a box tightly around the reference object, then press **Enter** or **Space** on your keyboard to lock it in. The UI will instantly display the computed focal length `f`.
 
-#### Step 2: Inverse Depth Curve Calibration ($a, b, c$)
-MiDaS does not generate linear distances; it generates an inverse disparity map. We must calculate the $a, b, c$ parameters to build an asymptotic curve ($Z = \frac{a}{Ratio + b} + c$).
+#### Step 2: Inverse Depth Calibration ($a, b, c$)
+MiDaS doesn't output true depth in cm; it outputs relative depth. We build an indestructible linear relationship between MiDaS' mathematically inverted relative depth ratio ($1 / (M_{rim}/M_{tray})$) and True Z distance.
 1. Enter the **Tray ROI**. This is a bounding box `(x1, y1, x2, y2)` referencing an empty patch of the tray that will never be occluded. You will see a blue "Tray ROI" box drawn continuously on the live preview frame. Make sure it rests on flat, empty tray space.
 2. Place your first cup under the nozzle. Make sure the green YOLO "Rim" bounding box locks onto the top of the cup in the live preview.
 3. Measure the exact physical distance from the camera lens to the cup rim. Enter this in the **True Z_rim (cm)** field.
-4. Click **Capture Data Point**. The UI will extract the $M_{rim}$ inside the YOLO box and $M_{tray}$ inside your Tray ROI and log the point.
+4. Click **Capture Data Point**. The UI will extract the $M_{rim}$ inside the YOLO box and $M_{tray}$ inside your Tray ROI and log the point to a persistent JSON dataset.
 5. Swap the cup out for a different-sized cup, enter the new **True Z_rim (cm)**, and click **Capture Data Point**. 
 6. Repeat until you have at least **3 data points** from cups of varying heights.
-7. Click **Fit Inverse Curve**. The script runs an asymptotic `curve_fit` over your points to compute $a, b,$ and $c$.
+7. Click **Fit Polynomial Curve** (now acts as Linear Fit). The script runs a robust 1D mathematical `np.polyfit` over the inverted axis to compute pure linear bounds for $a$ and $c$, safely bypassing noisy AI jitter.
 
 *(Note: The runtime backend automatically applies CLAHE dynamic lighting compensation, robust horizontal strip lip-sampling, and Exponential Moving Average smoothing on the backend for industrial stability).*
 

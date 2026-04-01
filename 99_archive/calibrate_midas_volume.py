@@ -32,7 +32,23 @@ class CalibrationWindow(Gtk.Window):
         self.poly_data_points = []
         
         self.setup_ui()
+        self.load_config()
         threading.Thread(target=self.load_models, daemon=True).start()
+
+    def load_config(self):
+        try:
+            with open('midas_calibration.yaml', 'r') as f:
+                config = yaml.safe_load(f)
+                self.entry_focal.set_text(str(config.get('focal_length', 840.0)))
+                self.entry_poly.set_text(f"{config.get('a',0)},{config.get('b',10)},{config.get('c',0)}")
+                
+                self.cam_idx = config.get('camera_index', 0)
+                self.entry_cam.set_text(str(self.cam_idx))
+                
+                roi = config.get('tray_roi', [10,400,100,470])
+                self.entry_roi.set_text(f"{roi[0]},{roi[1]},{roi[2]},{roi[3]}")
+        except FileNotFoundError:
+            pass
 
     def load_models(self):
         GLib.idle_add(self.status_label.set_text, "Loading MiDaS...")
@@ -108,13 +124,16 @@ class CalibrationWindow(Gtk.Window):
         btn_focal.connect("clicked", self.on_calc_focal_clicked)
         vbox_fl.pack_start(btn_focal, False, False, 0)
         
-        self.lbl_focal = Gtk.Label(label="f = Not calculated")
-        vbox_fl.pack_start(self.lbl_focal, False, False, 0)
+        box_fres = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+        box_fres.pack_start(Gtk.Label(label="Focal Length (px):"), False, False, 0)
+        self.entry_focal = Gtk.Entry(text="840.0")
+        box_fres.pack_start(self.entry_focal, True, True, 0)
+        vbox_fl.pack_start(box_fres, False, False, 0)
         frame_fl.add(vbox_fl)
         vbox_ctrl.pack_start(frame_fl, False, False, 0)
 
-        # --- Step 2: Inverse Depth Curve ---
-        frame_poly = Gtk.Frame(label="Step 2: Inverse Depth Calibration")
+        # --- Step 2: Polynomial Curve ---
+        frame_poly = Gtk.Frame(label="Step 2: Polynomial Calibration")
         vbox_poly = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         vbox_poly.set_border_width(5)
 
@@ -137,7 +156,7 @@ class CalibrationWindow(Gtk.Window):
         self.lbl_pts = Gtk.Label(label="Points Collected: 0")
         vbox_poly.pack_start(self.lbl_pts, False, False, 0)
 
-        btn_fit = Gtk.Button(label="Fit Inverse Curve")
+        btn_fit = Gtk.Button(label="Fit Polynomial Curve")
         btn_fit.connect("clicked", self.on_fit_clicked)
         vbox_poly.pack_start(btn_fit, False, False, 0)
 
@@ -160,6 +179,10 @@ class CalibrationWindow(Gtk.Window):
 
     def run_loop(self, cam_idx=0):
         self.cap = cv2.VideoCapture(cam_idx)
+        if not self.cap.isOpened():
+            GLib.idle_add(self.status_label.set_text, f"Error: Could not open camera {cam_idx}")
+            return
+        
         while self.running:
             ret, frame = self.cap.read()
             if not ret: break
@@ -273,7 +296,7 @@ class CalibrationWindow(Gtk.Window):
         box = self.current_boxes[0]['bbox']
         w_pixels = max(box[2] - box[0], box[3] - box[1])
         focal_length = (w_pixels * z_dist) / w_real
-        self.lbl_focal.set_text(f"f = {focal_length:.2f}")
+        self.entry_focal.set_text(f"{focal_length:.2f}")
 
     def on_add_point_clicked(self, widget):
         if self.depth_estimator is None or self.detector is None:
@@ -312,13 +335,14 @@ class CalibrationWindow(Gtk.Window):
         x_data = np.array([p['M_rim'] / p['M_tray'] for p in self.poly_data_points])
         y_data = np.array([p['Z_rim'] for p in self.poly_data_points])
         
-        # Mathematically grounded Inverse Depth mapping
+        # Mathematically grounded Inverse Depth mapping (For Future Reference)
         def inverse_curve(ratio, a, b, c): return (a / (ratio + b)) + c
         
+        # Highly accurate Empirical Quadratic mapping (Main Use)
+        def quadratic(ratio, a, b, c): return a * (ratio**2) + b * ratio + c
+        
         try:
-            # p0 gives curve_fit a safe starting point to avoid division by zero
-            p0 = [1.0, 0.1, 1.0]
-            popt, _ = curve_fit(inverse_curve, x_data, y_data, p0=p0, maxfev=10000)
+            popt, _ = curve_fit(quadratic, x_data, y_data)
             self.current_coeffs = popt
             self.lbl_poly.set_text(f"a={popt[0]:.4f}, b={popt[1]:.4f}, c={popt[2]:.4f}")
         except Exception as e:
@@ -327,8 +351,8 @@ class CalibrationWindow(Gtk.Window):
     def on_save_clicked(self, widget):
         try:
             if not hasattr(self, 'signal_coeffs'): raise ValueError("Signal A/B not calibrated.")
-            focal_str = self.lbl_focal.get_text().replace("f = ", "")
-            if "Not" in focal_str: raise ValueError("Focal length not calculated.")
+            focal_str = self.entry_focal.get_text()
+            if not focal_str: raise ValueError("Focal length is empty.")
             focal = float(focal_str)
             if not hasattr(self, 'current_coeffs'): raise ValueError("Polynomial not fitted.")
             

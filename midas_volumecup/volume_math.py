@@ -1,12 +1,26 @@
 import math
 import numpy as np
 
-def calculate_z_rim(m_rim: float, m_tray: float, a: float, b: float, c: float) -> float:
+def calculate_z_rim(m_rim: float, m_tray: float, a: float, b: float, c: float, use_inverse=True) -> float:
     ratio = m_rim / m_tray
-    # Mathematically grounded Inverse Depth mapping (Z ≈ 1/d)
-    if ratio + b == 0:
-        return 0.0
-    return (a / (ratio + b)) + c
+    
+    if use_inverse:
+        # Mathematically grounded Inverse Depth mapping (Z ≈ 1/d)
+        if ratio + b == 0: return 0.0
+        return (a / (ratio + b)) + c
+        
+    # Empirical Quadratic Polynomial (Z = a*R^2 + b*R + c)
+    return a * (ratio ** 2) + b * ratio + c
+
+def calculate_z_rim_alpha(m_rim: float, m_tray: float, z_tray_live: float, alpha: float) -> float:
+    """
+    Computes Cup Z-Depth perfectly using pure scaling geometry from the live Z_tray altitude.
+    """
+    if m_tray <= 0 or z_tray_live <= 0: return 0.0
+    ratio = m_rim / m_tray
+    if ratio == 0: return 0.0
+    
+    return (z_tray_live / ratio) * alpha
 
 def calculate_volume(z_rim: float, h_nozzle: float, w_pixels: float, focal_length: float):
     if z_rim <= 0 or focal_length <= 0:

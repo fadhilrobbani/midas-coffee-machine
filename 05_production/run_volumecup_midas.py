@@ -1,3 +1,5 @@
+import os
+import sys
 import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
@@ -5,6 +7,11 @@ import cv2
 import yaml
 import numpy as np
 import threading
+
+# Ensure project root is in path
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if root_dir not in sys.path:
+    sys.path.append(root_dir)
 
 from midas_volumecup.depth import MidasDepthEstimator
 from midas_volumecup.detector import YoloDetector
@@ -85,20 +92,22 @@ class RunnerWindow(Gtk.Window):
 
     def load_config(self):
         try:
-            with open('midas_calibration.yaml', 'r') as f:
-                config = yaml.safe_load(f)
-                self.entry_f.set_text(str(config.get('focal_length', 800.0)))
-                self.entry_poly.set_text(f"{config.get('a',0)},{config.get('b',10)},{config.get('c',0)}")
-                
-                sig_m = config.get('signal_m', 1.0)
-                sig_c = config.get('signal_c', 0.0)
-                sig_mb = config.get('signal_mb', 1.0)
-                
-                self.cam_idx = config.get('camera_index', 0)
-                
-                roi = config.get('tray_roi', [10,400,100,470])
-                self.entry_roi.set_text(f"{roi[0]},{roi[1]},{roi[2]},{roi[3]}")
-        except FileNotFoundError:
+            config_file = os.path.join(root_dir, 'midas_calibration.yaml')
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    config = yaml.safe_load(f)
+                    self.entry_f.set_text(str(config.get('focal_length', 800.0)))
+                    self.entry_poly.set_text(f"{config.get('a',0)},{config.get('b',10)},{config.get('c',0)}")
+                    
+                    sig_m = config.get('signal_m', 1.0)
+                    sig_c = config.get('signal_c', 0.0)
+                    sig_mb = config.get('signal_mb', 1.0)
+                    
+                    self.cam_idx = config.get('camera_index', 0)
+                    
+                    roi = config.get('tray_roi', [10,400,100,470])
+                    self.entry_roi.set_text(f"{roi[0]},{roi[1]},{roi[2]},{roi[3]}")
+        except:
             pass
 
     def on_start_clicked(self, widget):
@@ -156,7 +165,7 @@ class RunnerWindow(Gtk.Window):
                 m_tray = self.depth_estimator.get_tray_depth(depth_norm, tray_roi)
                 
                 if m_tray > 0:
-                    z_rim_raw = calculate_z_rim(m_rim, m_tray, a, b, coeff_c)
+                    z_rim_raw = calculate_z_rim(m_rim, m_tray, a, b, coeff_c, use_inverse=True)
                     
                     # Temporal Smoothing (Exponential Moving Average)
                     if self.z_rim_smooth is None:
@@ -175,15 +184,19 @@ class RunnerWindow(Gtk.Window):
 
             depth_vis = cv2.normalize(depth_map, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
             depth_vis = cv2.applyColorMap(depth_vis, cv2.COLORMAP_INFERNO)
-            
             combined = np.hstack((frame, depth_vis))
-            
-            rgb = cv2.cvtColor(combined, cv2.COLOR_BGR2RGB)
-            height, width, ch = rgb.shape
-            pb = GdkPixbuf.Pixbuf.new_from_data(rgb.tobytes(), GdkPixbuf.Colorspace.RGB, False, 8, width, height, width*3)
-            GLib.idle_add(self.image.set_from_pixbuf, pb)
+            GLib.idle_add(self.update_ui, combined)
             
         if self.cap: self.cap.release()
+
+    def update_ui(self, frame_bgr):
+        if not self.running: return
+        # All GDK/GTK object creation MUST happen here in the main UI thread
+        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        h, w, d = rgb.shape
+        pb = GdkPixbuf.Pixbuf.new_from_data(rgb.tobytes(), GdkPixbuf.Colorspace.RGB, False, 8, w, h, w*3)
+        self.image.set_from_pixbuf(pb)
+        return False
 
     def on_destroy(self, widget):
         self.running = False
