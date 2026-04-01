@@ -16,6 +16,10 @@ class MidasDepthEstimator:
             self.device, weights_path, model_type, optimize=False, height=None, square=False
         )
         self.model.eval()
+        
+        # Temporal smoothing state
+        self.prev_prediction = None
+        self.ema_alpha = 0.4  # Balance between 40% new inference, 60% historical memory
 
     def process(self, image):
         # 1. Apply CLAHE to the L channel of LAB color space to scientifically safely stabilize room lighting
@@ -43,7 +47,15 @@ class MidasDepthEstimator:
                 .cpu()
                 .numpy()
             )
-        return prediction
+            
+        # Global Temporal Smoothing Filter (Vectorized EMA)
+        if self.prev_prediction is None or self.prev_prediction.shape != prediction.shape:
+            self.prev_prediction = prediction
+        else:
+            prediction = (self.ema_alpha * prediction) + ((1.0 - self.ema_alpha) * self.prev_prediction)
+            self.prev_prediction = prediction
+            
+        return prediction.astype(np.float32)
 
     def get_tray_depth(self, depth_map, roi_coords):
         """ Average/Median depth in the tray region """
