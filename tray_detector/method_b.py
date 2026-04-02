@@ -60,8 +60,9 @@ def _cluster_lines(h_lines, cluster_gap=8.0):
             continue
         y_avg = sum(l["y_mid"] * l["length"] for l in cluster) / total_w
         x_avg = sum(l["x_mid"] * l["length"] for l in cluster) / total_w
-        x1_min = min(l["x1"] for l in cluster)
-        x2_max = max(l["x2"] for l in cluster)
+        longest_line = max(cluster, key=lambda l: l["length"])
+        x1_min = longest_line["x1"]
+        x2_max = longest_line["x2"]
         merged.append({
             "y_mid": y_avg, "x_mid": x_avg,
             "x1": x1_min, "x2": x2_max,
@@ -97,9 +98,9 @@ def _compute_pitch_iqr(y_mids):
     return float(np.median(valid)), len(valid)
 
 
-def _split_lines_by_zone(merged_lines, glass_bbox, frame_width):
-    """Pisahkan garis ke zona kiri/kanan berdasarkan glass_bbox."""
-    left_y, right_y = [], []
+def _split_raw_lines_by_zone(h_lines, glass_bbox, frame_width):
+    """Pisahkan raw garis ke zona kiri/kanan berdasarkan glass_bbox."""
+    left_lines, right_lines = [], []
 
     if glass_bbox is not None:
         left_boundary = glass_bbox[0] - 10
@@ -109,20 +110,20 @@ def _split_lines_by_zone(merged_lines, glass_bbox, frame_width):
         left_boundary = mid_x
         right_boundary = mid_x
 
-    for line in merged_lines:
+    for line in h_lines:
         cx = line["x_mid"]
         if glass_bbox is not None:
             if cx < left_boundary:
-                left_y.append(line["y_mid"])
+                left_lines.append(line)
             elif cx > right_boundary:
-                right_y.append(line["y_mid"])
+                right_lines.append(line)
         else:
             if cx < left_boundary:
-                left_y.append(line["y_mid"])
+                left_lines.append(line)
             else:
-                right_y.append(line["y_mid"])
+                right_lines.append(line)
 
-    return left_y, right_y
+    return left_lines, right_lines
 
 
 def _compute_zone_D(y_mids, f_pixel, P_real_cm, theta_tilt_rad, D_min, D_max):
@@ -157,11 +158,7 @@ def estimate_D_tray_method_B(frame, tray_mask, glass_bbox,
     """
     h, w = frame.shape[:2]
 
-    # ── Validasi mask ────────────────────────────────────────────────────
-    if tray_mask is None or np.count_nonzero(tray_mask) < 500:
-        return _empty_result("Tray mask terlalu kecil atau tidak ada")
-
-    # ── Apply mask → enhance → edge detect → Hough ──────────────────────
+    # ── Apply base mask → enhance → detect edges ────────────────────────
     mask_u8 = (tray_mask > 0).astype(np.uint8) * 255
     roi = cv2.bitwise_and(frame, frame, mask=mask_u8)
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
@@ -170,6 +167,29 @@ def estimate_D_tray_method_B(frame, tray_mask, glass_bbox,
     enhanced = clahe.apply(gray)
     blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
     edges = cv2.Canny(blurred, canny_low, canny_high)
+
+    # ── Terapkan Strict ROI Mask pada edges ──────────────────────────────
+    # Membuat dua kotak "sempit" tepat di kiri dan kanan gelas.
+    # Memotong margin atas/bawah 15% agar ujung rim solid tray diabaikan.
+    if glass_bbox is not None:
+        gx1, gy1, gx2, gy2 = glass_bbox
+        g_h = gy2 - gy1
+        
+        margin_y = int(g_h * 0.15)
+        box_y1 = max(0, int(gy1 + margin_y))
+        box_y2 = min(h, int(gy2 - margin_y))
+        
+        search_w = 250
+        lx1, lx2 = max(0, int(gx1 - search_w)), int(gx1 - 5)
+        rx1, rx2 = int(gx2 + 5), min(w, int(gx2 + search_w))
+        
+        strict_mask = np.zeros_like(edges)
+        if lx2 > lx1:
+            strict_mask[box_y1:box_y2, lx1:lx2] = 255
+        if rx2 > rx1:
+            strict_mask[box_y1:box_y2, rx1:rx2] = 255
+            
+        edges = cv2.bitwise_and(edges, strict_mask)
 
     lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi / 180,
                             threshold=hough_threshold,
@@ -186,18 +206,26 @@ def estimate_D_tray_method_B(frame, tray_mask, glass_bbox,
             debug_raw=debug_raw,
         )
 
-    # ── Cluster nearby lines ─────────────────────────────────────────────
-    merged = _cluster_lines(h_lines, cluster_gap=8.0)
-    debug_clustered = [(l["x1"], l["y1"], l["x2"], l["y2"]) for l in merged]
+    # ── Split zona LALU Cluster ──────────────────────────────────────────
+    # Ini sangat penting untuk frame bergambar gelas: jika kita cluster
+    # seluruh frame dulu, xy_mid dari sekat akan berada tepat di tengah frame
+    # (di balik gelas) yang menyebabkannya difilter habis.
+    left_raw, right_raw = _split_raw_lines_by_zone(h_lines, glass_bbox, w)
 
-    if len(merged) < min_lines:
+    left_merged = _cluster_lines(left_raw, cluster_gap=8.0)
+    right_merged = _cluster_lines(right_raw, cluster_gap=8.0)
+
+    debug_clustered = [(l["x1"], l["y1"], l["x2"], l["y2"]) for l in left_merged + right_merged]
+
+    total_merged = len(left_merged) + len(right_merged)
+    if total_merged == 0:
         return _empty_result(
-            f"Hanya {len(merged)} sekat setelah clustering (min={min_lines})",
+            "Tidak ada sekat valid setelah split zona dan clustering",
             debug_raw=debug_raw, debug_clustered=debug_clustered,
         )
 
-    # ── Split zona ───────────────────────────────────────────────────────
-    left_y, right_y = _split_lines_by_zone(merged, glass_bbox, w)
+    left_y = [l["y_mid"] for l in left_merged]
+    right_y = [l["y_mid"] for l in right_merged]
 
     D_left, n_left, p_left = _compute_zone_D(
         left_y, f_pixel, P_real_cm, theta_tilt_rad, D_min, D_max)
@@ -221,15 +249,16 @@ def estimate_D_tray_method_B(frame, tray_mask, glass_bbox,
         status = "SINGLE_ZONE"
         notes = "Hanya zona kanan valid"
     else:
-        # Fallback: coba semua clustered lines tanpa split
-        all_y = [l["y_mid"] for l in merged]
+        # Fallback: coba semua garis digabung jadi satu
+        all_merged = _cluster_lines(h_lines, cluster_gap=8.0)
+        all_y = [l["y_mid"] for l in all_merged]
         p_avg, n_all = _compute_pitch_iqr(all_y)
         if p_avg and p_avg > 1.0:
             D_all = (f_pixel * P_real_cm * math.cos(theta_tilt_rad)) / p_avg
             if D_min <= D_all <= D_max:
                 D_tray = round(D_all, 2)
                 status = "FULL_FRAME"
-                notes = f"{len(merged)} sekat, pitch={p_avg:.1f}px"
+                notes = f"{len(all_merged)} sekat full-frame, pitch={p_avg:.1f}px"
             else:
                 return _empty_result(
                     f"D={D_all:.1f}cm di luar [{D_min},{D_max}]. "
@@ -254,7 +283,7 @@ def estimate_D_tray_method_B(frame, tray_mask, glass_bbox,
         }
 
     # ── Confidence scoring (max ~0.85, sane range) ───────────────────────
-    total_slats = len(merged)
+    total_slats = len(left_merged) + len(right_merged)
     p_avg_final = p_left or p_right or 0
 
     if left_valid and right_valid:

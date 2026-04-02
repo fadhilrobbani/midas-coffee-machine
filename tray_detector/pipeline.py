@@ -118,23 +118,21 @@ class TrayDistancePipeline:
         if not boxes:
             return None, None, None
 
-        # Heuristik: bbox terbesar = tray, sisanya = glass
-        # Urutkan berdasarkan area descending
+        # Heuristik: 
+        # Jika ada > 1 deteksi: terbesar = tray, kedua = glass
+        # Jika hanya ada 1 deteksi (karena modelnya adalah cup_detector): deteksi = glass, tray = full frame
         sorted_boxes = sorted(boxes,
                               key=lambda b: (b["bbox"][2] - b["bbox"][0]) *
                                             (b["bbox"][3] - b["bbox"][1]),
                               reverse=True)
 
-        # Box pertama yang cukup besar → tray
-        for b in sorted_boxes:
-            bx1, by1, bx2, by2 = b["bbox"]
-            area = (bx2 - bx1) * (by2 - by1)
-            frame_area = w * h
-            if area > frame_area * 0.05:  # minimal 5% frame
-                if tray_bbox is None:
-                    tray_bbox = b["bbox"]
-                elif glass_bbox is None:
-                    glass_bbox = b["bbox"]
+        if len(sorted_boxes) == 1:
+            # Hanya deteksi cup
+            glass_bbox = sorted_boxes[0]["bbox"]
+            tray_bbox = (0, 0, w, h)
+        elif len(sorted_boxes) > 1:
+            tray_bbox = sorted_boxes[0]["bbox"]
+            glass_bbox = sorted_boxes[1]["bbox"]
 
         if tray_bbox is not None:
             tray_mask = self._create_tray_mask_from_bbox(tray_bbox,
