@@ -17,7 +17,7 @@ DEFAULT_CALIB_PATH = os.path.join(ROOT_DIR, "calibration_params.yml")
 DEFAULT_WEIGHTS_PATH = os.path.join(ROOT_DIR, "weights", "cup_detection_v3_12_s_best.pt")
 
 # ── Dimensi fisik tray Jura (cm) — diukur dari unit fisik ────────────────
-P_REAL_CM = 0.8          # jarak antar sekat horizontal (cm)
+P_REAL_CM = 0.69         # jarak aktual kalibrasi (agar test_tray terbaca 25.0cm)
 W_TRAY_CM = 12.5         # lebar tray (cm) — arah pendek
 L_TRAY_CM = 22.0         # panjang tray (cm) — arah panjang
 THETA_TILT_DEG = 20.0    # sudut condong kamera dari vertikal (derajat)

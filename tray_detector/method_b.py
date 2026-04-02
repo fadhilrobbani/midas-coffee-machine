@@ -46,7 +46,8 @@ def _cluster_lines(h_lines, cluster_gap=8.0):
     current = [sorted_lines[0]]
 
     for i in range(1, len(sorted_lines)):
-        if sorted_lines[i]["y_mid"] - current[-1]["y_mid"] <= cluster_gap:
+        # Bandingkan dengan titik referensi cluster (garis pertama di current) agar cluster tidak memanjang tanpa batas "chain merging"
+        if sorted_lines[i]["y_mid"] - current[0]["y_mid"] <= cluster_gap:
             current.append(sorted_lines[i])
         else:
             clusters.append(current)
@@ -68,8 +69,32 @@ def _cluster_lines(h_lines, cluster_gap=8.0):
             "x1": x1_min, "x2": x2_max,
             "y1": round(y_avg), "y2": round(y_avg),
             "count": len(cluster),
+            "length": total_w,  # simpan length untuk NMS
         })
-    return merged
+        
+    # ── Non-Maximum Suppression (NMS) Spasial ────────────────────────────
+    # Buang garis yang terlalu berdekatan (membatasi 1 garis per sekat fisik).
+    # Bertujuan menghapus deteksi ganda di sisi atas & bawah sekat yang tebal.
+    if not merged:
+        return []
+    
+    # Urutkan berdasarkan bobot panjang garis (prioritas garis paling solid)
+    merged.sort(key=lambda x: x["length"], reverse=True)
+    nms_merged = []
+    nms_thresh = 10.0  # Toleransi 10 pixel vertikal sebagai ketebalan 1 sekat
+    
+    for line in merged:
+        keep = True
+        for kept_line in nms_merged:
+            if abs(line["y_mid"] - kept_line["y_mid"]) <= nms_thresh:
+                keep = False
+                break
+        if keep:
+            nms_merged.append(line)
+            
+    # Kembalikan agar terurut dari atas ke bawah secara vertikal
+    nms_merged.sort(key=lambda x: x["y_mid"])
+    return nms_merged
 
 
 def _compute_pitch_iqr(y_mids):
@@ -165,8 +190,17 @@ def estimate_D_tray_method_B(frame, tray_mask, glass_bbox,
 
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(gray)
-    blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
-    edges = cv2.Canny(blurred, canny_low, canny_high)
+    blurred = cv2.GaussianBlur(enhanced, (3, 3), 0)
+    
+    # Adaptive Canny: Hitung median piksel agar gambar gelap tetap terdeteksi sekatnya
+    med = np.median(blurred)
+    c_low = max(5, int(0.66 * med))
+    c_high = min(255, int(1.33 * med))
+    # Batasi agar Canny tidak telalu tinggi saat gambar tidak rata (dark)
+    c_low = min(canny_low, c_low)
+    c_high = min(canny_high, c_high)
+    
+    edges = cv2.Canny(blurred, c_low, c_high)
 
     # ── Terapkan Strict ROI Mask pada edges ──────────────────────────────
     # Membuat dua kotak "sempit" tepat di kiri dan kanan gelas.
@@ -182,6 +216,30 @@ def estimate_D_tray_method_B(frame, tray_mask, glass_bbox,
         search_w = 250
         lx1, lx2 = max(0, int(gx1 - search_w)), int(gx1 - 5)
         rx1, rx2 = int(gx2 + 5), min(w, int(gx2 + search_w))
+        
+        strict_mask = np.zeros_like(edges)
+        if lx2 > lx1:
+            strict_mask[box_y1:box_y2, lx1:lx2] = 255
+        if rx2 > rx1:
+            strict_mask[box_y1:box_y2, rx1:rx2] = 255
+            
+        edges = cv2.bitwise_and(edges, strict_mask)
+    else:
+        # Fallback jika tidak ada gelas:
+        # 1. Buang secara paksa noise statis dari dinding atas & rim plastik bawah
+        # 2. Pura-pura ada gelas di tengah tray untuk memotong pola bundar drain hole!
+        # Ini akan memaksa algoritma hanya mengecek sisi paling kiri dan paling kanan.
+        box_y1 = int(h * 0.33)
+        box_y2 = int(h * 0.79)
+        
+        mid_x = w // 2
+        # Asumsikan diameter drain hole ~ 160 px, kita lewati 80 px ke kiri & kanan
+        skip_radius = 80
+        lx2 = max(0, mid_x - skip_radius)
+        lx1 = max(0, lx2 - 200)  # Box kiri selebar 200px
+        
+        rx1 = min(w, mid_x + skip_radius)
+        rx2 = min(w, rx1 + 200)
         
         strict_mask = np.zeros_like(edges)
         if lx2 > lx1:
@@ -212,8 +270,8 @@ def estimate_D_tray_method_B(frame, tray_mask, glass_bbox,
     # (di balik gelas) yang menyebabkannya difilter habis.
     left_raw, right_raw = _split_raw_lines_by_zone(h_lines, glass_bbox, w)
 
-    left_merged = _cluster_lines(left_raw, cluster_gap=8.0)
-    right_merged = _cluster_lines(right_raw, cluster_gap=8.0)
+    left_merged = _cluster_lines(left_raw, cluster_gap=6.0)
+    right_merged = _cluster_lines(right_raw, cluster_gap=6.0)
 
     debug_clustered = [(l["x1"], l["y1"], l["x2"], l["y2"]) for l in left_merged + right_merged]
 
@@ -250,7 +308,7 @@ def estimate_D_tray_method_B(frame, tray_mask, glass_bbox,
         notes = "Hanya zona kanan valid"
     else:
         # Fallback: coba semua garis digabung jadi satu
-        all_merged = _cluster_lines(h_lines, cluster_gap=8.0)
+        all_merged = _cluster_lines(h_lines, cluster_gap=6.0)
         all_y = [l["y_mid"] for l in all_merged]
         p_avg, n_all = _compute_pitch_iqr(all_y)
         if p_avg and p_avg > 1.0:
