@@ -5,9 +5,12 @@ This report outlines the complete mathematical theory, conceptual models, and ca
 ---
 
 ## 1. The Core Geometric Objective
-The system derives the physical volume of a cylinder (the cup) by measuring two primary dimensions:
+The system derives the physical volume of the cup by measuring two primary dimensions:
 1. **$H_{cup}$ (Cup Height)**: Derived from the camera altitude minus the distance to the rim.
 2. **$W_{real}$ (Cup Diameter)**: Derived from pixel-width using pinhole projection physics.
+
+> [!NOTE]
+> For simplicity we use the base Cylinder volume below, but real-world coffee cups are usually Truncated Cones (Frustums), so a more accurate mathematical representation when calculating volume should be: $\text{Volume} = \frac{1}{3}\pi \cdot H \cdot (R_{top}^2 + R_{top}R_{bottom} + R_{bottom}^2)$. Also note that the pinhole model measures Outer Diameter, whereas internal fluid volume depends on Inner Diameter.
 
 $$ \text{Volume (mL)} = \pi \times \left( \frac{W_{real}}{2} \right)^2 \times H_{cup} $$
 
@@ -24,12 +27,15 @@ This altitude is provided by an independent, external vision pipeline (e.g., **T
 MiDaS is a powerful depth estimator, but it predicts **relative depth** ratios, not absolute distances. This creates a critical scale ambiguity when the camera physically moves up and down.
 
 ### 3.1 The Tray ROI "Anchor"
-To anchor the AI, we define a static **Tray ROI** ($M_{tray}$) as a reference point. MiDaS scores both the cup rim ($M_{rim}$) and this floor anchor. All physical distance calculations originate from this mathematical Ratio:
+To anchor the AI, we define a static **Tray ROI** ($M_{tray}$) as a reference point. MiDaS scores both the cup rim ($M_{rim}$) and this floor anchor. Older legacy systems attempt to calculate physical distance based on this mathematical Ratio:
 $$ R = \frac{M_{rim}}{M_{tray}} $$
 
-### 3.2 Resolving Ambiguity: The "Pure Physics" Multiplier (Default)
-Because $R$ is mathematically equivalent to the ratio of their physical distances ($R = \frac{Z_{tray}}{Z_{rim}}$), rearranging the formula proves that the calculated cup height strictly depends on knowing the distance to the floor:
+### 3.2 Resolving Ambiguity: The "Pure Physics" Multiplier (Legacy)
+Because $R$ is mathematically assumed to be the equivalent ratio of their physical distances ($R = \frac{Z_{tray}}{Z_{rim}}$), rearranging the formula allows us to use $R$:
 $$ Z_{rim} = \frac{Z_{tray}}{R} $$
+
+> [!WARNING]
+> **Scale & Shift Ambiguity Flaw:** The ratio above is ONLY algebraically valid if the Relative Depth Shift is zero ($b=0$). In reality, Monocular models output disparity as $M = a \cdot \frac{1}{Z} + b$. Because the AI is constantly global-normalizing, $b$ is never zero and constantly fluctuating. A simple ratio $R$ mathematically shatters when $b \neq 0$. Therefore, the legacy multiplier method $\alpha$ is insufficient for industrial stability.
 
 If digital cameras and glass lenses were flawless, this raw division would be mathematically perfect. To account for optical lens distortion and AI biases, the system introduces a static **Lens Correction Multiplier** ($\alpha$):
 
@@ -40,10 +46,15 @@ During calibration, the system does not solve complex multi-variable curves. It 
 $$ \alpha = \frac{\text{True } Z_{rim} \times R}{\text{True } Z_{tray}} $$
 The technician moves the camera to various heights, inputs both True $Z_{tray}$ and True $Z_{rim}$, and the software averages the algebraic results to lock in a single, permanent $\alpha$ constant (saved to `midas_calibration.yaml`).
 
-### 3.3 Alternative: 3D Surface Regression
-If the neural network behaves heavily non-linearly at extreme camera altitudes (e.g., severe perspective warping renders a static $\alpha$ inaccurate), the system must fallback to a multidimensional surface fit:
-$$ Z_{rim} = \frac{a \cdot Z_{tray}}{R} + b \cdot Z_{tray} + c $$
-*Note: While ensuring unbreakable bounding accuracy across all heights, this requires tedious multi-height data collection during assembly.*
+### 3.3 The New Standard: Multivariate Linear Regression
+Because the network behaves non-linearly and has an active floating Shift variable ($b$), we abandon the $R$ ratio completely. Instead, the system uses a **Multivariate Linear Regression** to absorb both the unknown scale and shift natively during real-time inference:
+
+$$ Z_{rim_{real}} = C_1 \cdot M_{rim} + C_2 \cdot M_{tray} + C_3 \cdot Z_{tray_{real}} + C_4 $$
+
+> [!TIP]
+> This mathematically elegant solution allows $C_1...C_4$ to serve as intelligent weights that correct the AI's rim depth guess ($C_1$), act as a counterbalance for AI's global shift hallucination ($C_2$), adjust for optical lens distortion from altitude changes ($C_3$), and provide an absolute physical base component error shift ($C_4$).
+
+*Note: This requires calibration across extreme and median points to properly fit the multiple components.*
 
 ---
 
@@ -61,8 +72,9 @@ To prevent frame-to-frame calculation "flicker," the software applies two consta
 An **Exponential Moving Average** (EMA) mathematically locks the depth output for UI butter-smoothness:
 $$ Z_{smooth} = \lambda \cdot Z_{new} + (1 - \lambda) \cdot Z_{prev} $$
 
-### 5.2 CLAHE Normalization
-**Contrast Limited Adaptive Histogram Equalization** is applied to every frame *before* AI inference. This flattens aggressive glints/shadows from stainless steel components, ensuring the $M_{tray}$ anchor remains mathematically stable across varying lighting scenarios.
+### 5.2 Avoid CLAHE Normalization on Depth AI
+> [!CAUTION]
+> Applying **Contrast Limited Adaptive Histogram Equalization (CLAHE)** to every frame *before* Monocular AI inference is highly destructive. Because models like MiDaS guess depth based on the "global context" of the frame, aggressively normalizing contrast in every frame will cause the scene context to mathematically "pulsate". This causes the intrinsic Scale ($a$) and Shift ($b$) to change dramatically frame-by-frame, inducing massive flicker in the predicted depth even when the scene is static.
 
 ---
 

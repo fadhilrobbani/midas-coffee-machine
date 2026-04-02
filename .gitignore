@@ -105,6 +105,6 @@ venv.bak/
 
 *.png
 *.pfm
-*.jpg
+.jpg
 *.jpeg
 *.pt

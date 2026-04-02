@@ -57,7 +57,8 @@ class DebugRunnerWindow(Gtk.Window):
         self.entry_cam_h = Gtk.Entry(text="29.0"); vbox_vars.pack_start(Gtk.Label(label="True Camera H (cm):"),0,0,0); vbox_vars.pack_start(self.entry_cam_h,0,0,0)
         self.entry_f = Gtk.Entry(text="846"); vbox_vars.pack_start(Gtk.Label(label="Focal Length (px):"),0,0,0); vbox_vars.pack_start(self.entry_f,0,0,0)
         self.entry_roi = Gtk.Entry(text="10,400,100,470"); vbox_vars.pack_start(Gtk.Label(label="Tray ROI:"),0,0,0); vbox_vars.pack_start(self.entry_roi,0,0,0)
-        self.entry_alpha = Gtk.Entry(text="1.0"); vbox_vars.pack_start(Gtk.Label(label="Alpha Multiplier:"),0,0,0); vbox_vars.pack_start(self.entry_alpha,0,0,0)
+        self.entry_alpha = Gtk.Entry(text="1.0"); vbox_vars.pack_start(Gtk.Label(label="Legacy Alpha Multiplier:"),0,0,0); vbox_vars.pack_start(self.entry_alpha,0,0,0)
+        self.entry_multi = Gtk.Entry(text="0.0,0.0,0.0,0.0"); vbox_vars.pack_start(Gtk.Label(label="Multivariate (C1,C2,C3,C4):"),0,0,0); vbox_vars.pack_start(self.entry_multi,0,0,0)
         self.entry_cam = Gtk.Entry(text="0"); vbox_vars.pack_start(Gtk.Label(label="Cam Index:"),0,0,0); vbox_vars.pack_start(self.entry_cam,0,0,0)
         frame_vars.add(vbox_vars); vbox_ctrl.pack_start(frame_vars, False, False, 0)
 
@@ -79,6 +80,8 @@ class DebugRunnerWindow(Gtk.Window):
                     config = yaml.safe_load(f)
                     self.entry_f.set_text(str(config.get('focal_length', 846.0)))
                     self.entry_alpha.set_text(str(config.get('alpha', 1.0)))
+                    c1, c2, c3, c4 = config.get('c1', 0.0), config.get('c2', 0.0), config.get('c3', 0.0), config.get('c4', 0.0)
+                    self.entry_multi.set_text(f"{c1},{c2},{c3},{c4}")
                     roi = config.get('tray_roi', [10,400,100,470])
                     self.entry_roi.set_text(f"{roi[0]},{roi[1]},{roi[2]},{roi[3]}")
         except: pass
@@ -124,6 +127,7 @@ class DebugRunnerWindow(Gtk.Window):
                 manual_h = float(self.entry_cam_h.get_text())
                 focal = float(self.entry_f.get_text())
                 alpha = float(self.entry_alpha.get_text())
+                c1, c2, c3, c4 = map(float, self.entry_multi.get_text().split(','))
                 t1, t2, t3, t4 = map(int, self.entry_roi.get_text().split(','))
             except:
                 continue
@@ -134,10 +138,30 @@ class DebugRunnerWindow(Gtk.Window):
             
             m_tray = self.depth_estimator.get_tray_depth(depth_norm, (t1,t2,t3,t4))
             cv2.rectangle(frame, (t1, t2), (t3, t4), (255, 0, 0), 2)
+            
+            # Floor predictions (Feeding M_tray instead of M_rim)
+            floor_z_multi = (c1 * m_tray) + (c2 * m_tray) + (c3 * manual_h) + c4
+            floor_z_alpha = calculate_z_rim_alpha(m_tray, m_tray, manual_h, alpha)
+            
             debug_text = f"M_tray: {m_tray:.1f}\n"
+            debug_text += f"--- Floor Calib ---\n"
+            debug_text += f"Floor Z (Multi): {floor_z_multi:.1f} cm\n"
+            debug_text += f"Floor Z (Alpha): {floor_z_alpha:.1f} cm\n\n"
 
             if boxes and m_tray > 0:
                 x1, y1, x2, y2 = boxes[0]['bbox']
+                
+                # --- Aggregate Final Prediction (Like Evaluator) ---
+                m_rim = self.depth_estimator.get_rim_depth(depth_norm, (x1, y1, x2, y2))
+                final_z_multi = (c1 * m_rim) + (c2 * m_tray) + (c3 * manual_h) + c4
+                final_h_multi = manual_h - final_z_multi
+                
+                debug_text += f"--- Cup Final ---\n"
+                debug_text += f"M_rim: {m_rim:.1f}\n"
+                debug_text += f"Final Z_rim (Multi): {final_z_multi:.1f} cm\n"
+                debug_text += f"Final Cup Height: {final_h_multi:.1f} cm\n\n"
+                
+                debug_text += f"--- Patch Traces ---\n"
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cx, cy, w_px = (x1+x2)//2, (y1+y2)//2, max(x2-x1, y2-y1)
                 offset = max(5, (y2 - y1) // 10)
@@ -145,12 +169,17 @@ class DebugRunnerWindow(Gtk.Window):
                 
                 for name, (px, py, pw, ph) in pts.items():
                     m = self.extract_patch_median(depth_norm, px, py, pw, ph)
-                    ratio = m/m_tray
-                    z = calculate_z_rim_alpha(m, m_tray, manual_h, alpha)
-                    if z <= 0: debug_text += f"{name} -> M:{m:.1f} | R:{ratio:.2f} | ERR\n"
+                    ratio = m/m_tray if m_tray > 0 else 0
+                    
+                    z_alpha = calculate_z_rim_alpha(m, m_tray, manual_h, alpha)
+                    z_multi = (c1 * m) + (c2 * m_tray) + (c3 * manual_h) + c4
+                    
+                    h_multi = manual_h - z_multi
+                    
+                    if z_alpha <= 0 and z_multi <= 0: 
+                        debug_text += f"{name} -> M:{m:.1f} | ERR\n"
                     else:
-                        h_cup = manual_h - z
-                        debug_text += f"{name} -> M:{m:.1f} | R:{ratio:.2f} | Z:{z:.1f}cm | H:{h_cup:.1f}cm\n"
+                        debug_text += f"{name} -> Z_rim: {z_multi:.1f}cm | H_cup: {h_multi:.1f}cm\n"
                     cv2.rectangle(frame, (px-pw//2, py-ph//2), (px+pw//2, py+ph//2), (0,255,255), 1)
 
             # --- Thread-Safe UI Update ---
