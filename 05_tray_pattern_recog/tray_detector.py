@@ -4,12 +4,15 @@ import os
 import yaml
 import sys
 
-# Ensure project root is in path so we can import midas_volumecup
-root_dir = "/home/fadhilrobbani/Programming/Aranus/MiDaS"
+import argparse
+
+# Dynamic root directory (one level up from this script's directory)
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if root_dir not in sys.path:
     sys.path.append(root_dir)
 
 from midas_volumecup.detector import YoloDetector
+import glob
 
 def load_calibration(params_path):
     """ Loads camera intrinsics for the right camera (index 2). """
@@ -124,17 +127,36 @@ def detect_tray_pattern(image_path, output_dir, detector, K, D):
     return output_path
 
 if __name__ == "__main__":
-    snapshots_dir = os.path.join(root_dir, "01_calibration/calibration_snapshots")
-    output_dir = os.path.join(root_dir, "05_tray_pattern_recog")
-    params_file = os.path.join(root_dir, "calibration_params.yml")
+    parser = argparse.ArgumentParser(description="Tray Pattern Detector")
+    parser.add_argument("--image", type=str, help="Path to a single image file")
+    parser.add_argument("--input_dir", type=str, help="Directory containing images to process")
+    parser.add_argument("--output_dir", type=str, help="Directory to save results")
+    parser.add_argument("--weights", type=str, help="Path to YOLO weights")
+    parser.add_argument("--params", type=str, help="Path to calibration parameters YAML")
     
+    args = parser.parse_args()
+
+    # Defaults
+    output_dir = args.output_dir if args.output_dir else os.path.join(root_dir, "05_tray_pattern_recog/results")
+    params_file = args.params if args.params else os.path.join(root_dir, "calibration_params.yml")
+    weights_path = args.weights if args.weights else os.path.join(root_dir, "weights/cup_detection_v3_12_s_best.pt")
+
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
         
     K, D = load_calibration(params_file)
-    detector = YoloDetector(weights_path=os.path.join(root_dir, "weights/cup_detection_v3_12_s_best.pt"))
+    detector = YoloDetector(weights_path=weights_path)
 
-    snapshots = [f for f in os.listdir(snapshots_dir) if f.endswith('.jpg')]
-    for snapshot in snapshots:
-        image_path = os.path.join(snapshots_dir, snapshot)
-        detect_tray_pattern(image_path, output_dir, detector, K, D)
+    if args.image:
+        # Process single image
+        detect_tray_pattern(args.image, output_dir, detector, K, D)
+    else:
+        # Process directory (default or specified)
+        snapshots_dir = args.input_dir if args.input_dir else os.path.join(root_dir, "01_calibration/calibration_snapshots")
+        if os.path.exists(snapshots_dir):
+            snapshots = [f for f in os.listdir(snapshots_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+            for snapshot in snapshots:
+                image_path = os.path.join(snapshots_dir, snapshot)
+                detect_tray_pattern(image_path, output_dir, detector, K, D)
+        else:
+            print(f"Error: Input directory {snapshots_dir} does not exist.")
