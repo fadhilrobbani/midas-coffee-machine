@@ -30,7 +30,8 @@ class YoloDetector:
         """ Returns list of dicts: [{'bbox': (x1,y1,x2,y2), 'conf': float}] """
         boxes = []
         if self.is_ultralytics:
-            results = self.model(frame, verbose=False)
+            # Optimize: use imgsz=320 to speed up inference on CPU
+            results = self.model(frame, verbose=False, imgsz=320)
             if len(results) > 0:
                 for det in results[0].boxes:
                     cls_id = int(det.cls[0].item())
