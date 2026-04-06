@@ -6,8 +6,8 @@ This guide explains the 4-step professional workflow for calibrating and running
 
 | Folder | Purpose | Key Files |
 | :--- | :--- | :--- |
-| **`01_calibration/`** | Initial Setup & Curve Fitting | `calibrate_midas_polynomial.py`, `visualize_curve.py` |
-| **`02_evaluation/`** | Accuracy Audit & Reporting | `evaluate_test_data.py`, `validation_report.md` |
+| **`01_calibration/`** | Initial Setup & Curve Fitting | `calibrate_midas_polynomial.py`, `calibrate_depth_multivariate.py` |
+| **`02_evaluation/`** | Accuracy Audit & Reporting | `evaluate_test_data.py`, `evaluate_depth_multivariate.py` |
 | **`03_diagnostics/`** | Real-time Debugging & Rim Analysis | `detect_camera_height_midas.py` |
 | **`04_dataset/`** | Test Data & Snapshot Collection | `collect_test_data.py`, `test_points.json` |
 | **`05_production/`** | Live Production Environment | `run_volumecup_midas.py` |
@@ -35,15 +35,18 @@ Before calibrating, ensure your camera and lighting are stable.
 - Verify that the YOLO green box stays locked on the cup rim and the `M_tray` value isn't flickering wildly.
 
 ### Step 2: Parameter Capture (Calibration)
-Capture physical data points to build the depth multiplier factor.
-- Run: `python 01_calibration/calibrate_midas_polynomial.py`
+Capture physical data points to build the depth geometry factors.
+- **Legacy (Alpha Multiplier)**: Run `python 01_calibration/calibrate_midas_polynomial.py`
+- **Modern (Multivariate)**: Run `python 01_calibration/calibrate_depth_multivariate.py` *(Recommended)*
+
+**How to Calibrate**:
 - **True Z Tray (cm)**: The physical distance from the camera lens to the floor/tray. Measure this accurately with a ruler.
 - **True Z Rim (cm)**: The physical distance from the camera lens to the cup rim.
 - **Tray ROI**: Set this box to a flat, empty area on the **absolute floor or tray surface** where the cup sits. This serves as the depth reference (`M_tray`).
 - Place cups of different sizes and occasionally move the camera to different heights. Enter both true Z values and click **Capture Data Point**.
-- Capture at least **3–5 points** covering different nozzle altitudes to average out optical lens distortion.
-- Click **Calculate Alpha Multiplier** (uses the pure geometric multiplier).
-- Click **Save to YAML** to lock the $\alpha$ constant to the root config.
+- Capture at least **3–5 points** covering different nozzle altitudes to average out optical lens distortion (Multivariate requires a minimum of 4 points).
+- Click **Calculate** to fit the regression (Alpha or C1-C4 weights).
+- Click **Save to YAML** to lock the constants to the root config.
 - **Tip**: If you have multiple cameras, use the **Cam Index** entry and click **Switch** to change feeds without restarting.
 
 ### Step 3: Test Dataset Collection (New)
@@ -55,7 +58,9 @@ For a professional accuracy audit, collect a separate "Test Dataset" that isn't 
 
 ### Step 4: Accuracy Audit (Evaluation)
 Verify exactly how accurate your calibration is using the collected test dataset.
-- Run: `python 02_evaluation/evaluate_test_data.py`
+- **Legacy Evaluator**: Run `python 02_evaluation/evaluate_test_data.py` (Tests Alpha $\alpha$)
+- **Modern Evaluator**: Run `python 02_evaluation/evaluate_depth_multivariate.py` (Tests C1-C4)
+
 - **Historical Tracking**: Each run creates a new **timestamped folder** (e.g., `evaluation_results/eval_20260401_120000/`). This prevents old results from being overwritten.
 - This script automatically scans your test dataset and compares the model's predictions vs your ground truth.
 - Open the **`validation_report.md`** inside the latest timestamped folder to see the visual evidence and the **Global Accuracy Summary** table.
@@ -75,7 +80,7 @@ Deploy the system for real-time volume estimation.
 
 ## 🛠️ Configuration
 All scripts share the central configuration file: **`midas_calibration.yaml`** in the root directory. 
-- **DO NOT** delete this file; it contains your lenses' Focal Length and your custom **Alpha ($\alpha$) Multiplier**.
+- **DO NOT** delete this file; it contains your lenses' Focal Length and your calibration constants (Alpha $\alpha$ or $C_1 \dots C_4$).
 
 ---
 
