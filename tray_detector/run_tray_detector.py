@@ -75,21 +75,23 @@ def process_directory(pipeline, input_dir, output_dir):
         process_single_image(pipeline, img_path, output_dir)
 
 
-def run_live_camera(pipeline, camera_index=0):
+def run_live_camera(pipeline, camera_index=0, lock_focus=False, focus_value=0):
     """Live camera mode dengan overlay real-time."""
-    cap = cv2.VideoCapture(camera_index)
-
-    if not cap.isOpened():
-        print(f"Error: Tidak bisa membuka kamera index {camera_index}")
-        print("Tips: coba index lain (0, 1, 2) atau periksa koneksi kamera")
+    from tray_detector.camera_utils import init_camera
+    
+    cap = init_camera(
+        camera_index=camera_index,
+        lock_focus=lock_focus,
+        focus_value=focus_value,
+        width=640, height=480,
+    )
+    if cap is None:
         return
-        
-    # Optimasi FPS: Set resolusi kamera ke 640x480 (mengurangi beban processing)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
     print(f"Live camera dimulai (index={camera_index})")
     print("Tekan 'q' untuk keluar | 's' untuk screenshot")
+    if lock_focus:
+        print(f"🔒 Focus locked at value={focus_value}")
 
     fps_counter = 0
     fps_time = time.time()
@@ -154,18 +156,15 @@ Contoh penggunaan:
   # Proses satu gambar
   python -m tray_detector.run_tray_detector --image foto_tray.jpg
 
-  # Batch folder
-  python -m tray_detector.run_tray_detector --input_dir ./images/
-
   # Live camera (default index 0)
   python -m tray_detector.run_tray_detector --camera
 
-  # Live camera dengan index tertentu
-  python -m tray_detector.run_tray_detector --camera 2
+  # Live camera dengan lock focus (untuk tray tanpa gelas)
+  python -m tray_detector.run_tray_detector --camera 0 --lock-focus
+  python -m tray_detector.run_tray_detector --camera 0 --lock-focus --focus-value 30
 
-  # Tanpa YOLO — langsung Hough Lines di seluruh frame
-  python -m tray_detector.run_tray_detector --image foto.jpg --no-yolo
-  python -m tray_detector.run_tray_detector --camera 0 --no-yolo
+  # Tanpa YOLO + lock focus (best for tray-only)
+  python -m tray_detector.run_tray_detector --camera 0 --no-yolo --lock-focus
         """,
     )
 
@@ -191,6 +190,12 @@ Contoh penggunaan:
                         choices=["auto", "A", "B", "C"],
                         help="Pilih metode deteksi: auto (hierarki), A (apparent width), "
                              "B (horizontal slat pitch), C (homografi PnP). Default: auto")
+    parser.add_argument("--lock-focus", action="store_true",
+                        help="Lock camera focus (matikan auto-focus). "
+                             "Wajib untuk akurasi jarak jauh tanpa YOLO.")
+    parser.add_argument("--focus-value", type=int, default=0,
+                        help="Nilai fokus tetap saat --lock-focus aktif. "
+                             "0=infinity (default, terbaik untuk overhead tray)")
 
     args = parser.parse_args()
 
@@ -214,7 +219,9 @@ Contoh penggunaan:
     elif args.input_dir:
         process_directory(pipeline, args.input_dir, output_dir)
     elif args.camera is not None:
-        run_live_camera(pipeline, camera_index=args.camera)
+        run_live_camera(pipeline, camera_index=args.camera,
+                        lock_focus=args.lock_focus,
+                        focus_value=args.focus_value)
 
 
 if __name__ == "__main__":
