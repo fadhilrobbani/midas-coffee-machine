@@ -67,6 +67,15 @@ class TrayDistancePipeline:
 
         print(f"[INFO] Metode aktif: {self.method}")
 
+        # ── YOLO caching untuk live cam (hemat CPU) ──────────────────────
+        self._frame_count = 0
+        self._cached_yolo = (None, None, None)  # (tray_bbox, tray_mask, glass_bbox)
+        self.yolo_interval = 5  # Jalankan YOLO setiap N frame saja
+
+        # ── Temporal smoothing buffer (anti jitter) ──────────────────────
+        from collections import deque
+        self._d_tray_history = deque(maxlen=7)  # Rolling window 7 frame
+
         # Pre-compute undistort maps for speed
         self._K = self.cfg["camera_matrix"]
         self._D = self.cfg["dist_coeffs"]
@@ -165,7 +174,17 @@ class TrayDistancePipeline:
             tray_mask = np.ones((h, w), dtype=np.uint8) * 255
             glass_bbox = None
         else:
-            tray_bbox, tray_mask, glass_bbox = self._run_yolo(frame_u)
+            # YOLO caching: hanya jalankan YOLO setiap N frame
+            self._frame_count += 1
+            if self._frame_count % self.yolo_interval == 1 or self._cached_yolo[0] is None:
+                tray_bbox, tray_mask, glass_bbox = self._run_yolo(frame_u)
+                self._cached_yolo = (tray_bbox, tray_mask, glass_bbox)
+            else:
+                tray_bbox, tray_mask, glass_bbox = self._cached_yolo
+                # Regenerasi tray_mask jika ukuran frame berubah
+                if tray_mask is not None and tray_mask.shape[:2] != (h, w):
+                    tray_mask = np.ones((h, w), dtype=np.uint8) * 255
+
             if tray_bbox is None:
                 return {
                     "D_tray_cm": None,
@@ -261,6 +280,14 @@ class TrayDistancePipeline:
             "tray_bbox": tray_bbox,
             "glass_bbox": glass_bbox,
         }
+        # ── Temporal Smoothing (anti jitter untuk live cam) ────────────────
+        raw_d = fused.get("D_tray_cm")
+        if raw_d is not None:
+            self._d_tray_history.append(raw_d)
+            if len(self._d_tray_history) >= 3:
+                import numpy as _np
+                smoothed = float(_np.median(list(self._d_tray_history)))
+                fused["D_tray_cm"] = round(smoothed, 1)
 
         return fused
 
@@ -298,11 +325,8 @@ class TrayDistancePipeline:
         # ── Hough Lines dari Metode B ────────────────────────────────────
         result_b = detail.get("method_b", {})
         if result_b and isinstance(result_b, dict):
-            # Gambar raw lines tipis (abu-abu) sebagai referensi
-            for line in result_b.get("debug_lines", []):
-                lx1, ly1, lx2, ly2 = line
-                cv2.line(vis, (int(lx1), int(ly1)), (int(lx2), int(ly2)),
-                         (80, 80, 80), 1)
+            # Raw lines (abu-abu) dihilangkan agar tampilan lebih bersih
+            # Data tetap tersimpan di result["_detail"] untuk analisis offline
 
             # Gambar clustered lines (hijau tebal) — satu per sekat
             clustered = result_b.get("debug_clustered", [])
@@ -358,10 +382,24 @@ class TrayDistancePipeline:
         cv2.putText(vis, f"Method: {method} | Conf: {conf:.2f}",
                     (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                     (200, 200, 200), 1)
+        
         y_offset += 25
         color = (0, 255, 0) if status == "OK" else (0, 165, 255)
         cv2.putText(vis, f"Status: {status}", (10, y_offset),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 1)
+
+        # ── Tambah info Left/Right D_tray & Slat Count ───────────────────
+        dl = result.get("D_left_cm")
+        dr = result.get("D_right_cm")
+        ll = result.get("lines_left", 0)
+        lr = result.get("lines_right", 0)
+        
+        y_offset += 25
+        dl_str = f"{dl:.1f}" if dl else "N/A"
+        dr_str = f"{dr:.1f}" if dr else "N/A"
+        cv2.putText(vis, f"L: {dl_str}cm ({ll}s) | R: {dr_str}cm ({lr}s)", 
+                    (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.55, 
+                    (255, 255, 0), 1)
 
         # ── Notes ────────────────────────────────────────────────────────
         notes = result.get("notes")

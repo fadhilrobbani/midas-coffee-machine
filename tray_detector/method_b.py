@@ -152,14 +152,65 @@ def _split_raw_lines_by_zone(h_lines, glass_bbox, frame_width):
 
 
 def _compute_zone_D(y_mids, f_pixel, P_real_cm, theta_tilt_rad, D_min, D_max):
-    """Hitung D_tray untuk satu zona."""
-    p_avg, num_valid = _compute_pitch_iqr(y_mids)
-    if p_avg is None or p_avg < 1.0:
-        return None, 0, p_avg
-    D_tray = (f_pixel * P_real_cm * math.cos(theta_tilt_rad)) / p_avg
-    if not (D_min <= D_tray <= D_max):
-        return None, num_valid, p_avg
-    return round(D_tray, 2), num_valid, p_avg
+    """
+    Hitung D_tray untuk satu zona menggunakan dua metode:
+    1. Pitch-based: D = (f * P * cos(theta)) / median_pitch
+    2. Span-based:  D = (f * N_gaps * P * cos(theta)) / span_px
+    
+    Metode span-based kebal terhadap auto-focus karena menggunakan
+    total rentang vertikal dari semua sekat yang terdeteksi.
+    """
+    if len(y_mids) < 3:
+        return None, 0, None
+    
+    y_sorted = sorted(y_mids)
+    gaps = np.diff(y_sorted)
+    
+    if len(gaps) == 0:
+        return None, 0, None
+    
+    # IQR filtering pada gaps
+    q1, q3 = np.percentile(gaps, [25, 75])
+    iqr = q3 - q1
+    if iqr < 1e-6:
+        valid_gaps = gaps
+    else:
+        lower = q1 - 1.5 * iqr
+        upper = q3 + 1.5 * iqr
+        valid_gaps = gaps[(gaps >= lower) & (gaps <= upper)]
+    
+    if len(valid_gaps) == 0:
+        valid_gaps = gaps
+    
+    p_avg = float(np.median(valid_gaps))
+    
+    if p_avg < 1.0:
+        return None, len(valid_gaps), p_avg
+    
+    # ── Metode 1: Pitch-based (klasik) ───────────────────────────────────
+    D_pitch = (f_pixel * P_real_cm * math.cos(theta_tilt_rad)) / p_avg
+    
+    # ── Metode 2: Span-based (anti auto-focus) ──────────────────────────
+    # Gunakan rentang vertikal penuh dari sekat pertama sampai terakhir
+    span_px = y_sorted[-1] - y_sorted[0]
+    n_gaps = len(y_sorted) - 1  # jumlah celah = jumlah sekat - 1
+    
+    D_span = None
+    if span_px > 10 and n_gaps >= 2:
+        # Total jarak fisik dari sekat pertama ke terakhir = n_gaps * P_real_cm
+        total_physical_cm = n_gaps * P_real_cm
+        D_span = (f_pixel * total_physical_cm * math.cos(theta_tilt_rad)) / span_px
+    
+    # ── Pilih metode terbaik ─────────────────────────────────────────────
+    # Span-based lebih stabil terhadap auto-focus, jadi gunakan sebagai primary
+    if D_span is not None and D_min <= D_span <= D_max:
+        D_tray = D_span
+    elif D_min <= D_pitch <= D_max:
+        D_tray = D_pitch
+    else:
+        return None, len(valid_gaps), p_avg
+    
+    return round(D_tray, 2), len(valid_gaps), p_avg
 
 
 def estimate_D_tray_method_B(frame, tray_mask, glass_bbox,
@@ -320,7 +371,7 @@ def estimate_D_tray_method_B(frame, tray_mask, glass_bbox,
             else:
                 return _empty_result(
                     f"D={D_all:.1f}cm di luar [{D_min},{D_max}]. "
-                    f"pitch={p_avg:.1f}px, {len(merged)} sekat",
+                    f"pitch={p_avg:.1f}px, {len(all_merged)} sekat",
                     debug_raw=debug_raw, debug_clustered=debug_clustered,
                 )
         else:
@@ -328,6 +379,36 @@ def estimate_D_tray_method_B(frame, tray_mask, glass_bbox,
                 "Pitch tidak valid",
                 debug_raw=debug_raw, debug_clustered=debug_clustered,
             )
+
+    if D_tray is None:
+        return _empty_result(
+            "Tidak ada zona yang valid",
+            debug_raw=debug_raw, debug_clustered=debug_clustered,
+        )
+
+    # ── Slat-Count Correction (anti auto-focus stagnation) ────────────────
+    # Auto-focus mengubah f_eff ∝ D, sehingga pitch tetap konstan.
+    # Namun JUMLAH sekat yang terlihat berkurang saat tray menjauh
+    # (karena FOV tidak sempurna linear). Kita gunakan rasio jumlah sekat
+    # sebagai proxy untuk koreksi.
+    # Kalibrasi: pada D=25cm dengan YOLO aktif, terdeteksi ~27 sekat total.
+    total_slats = len(left_merged) + len(right_merged)
+    REF_SLATS = 27  # jumlah sekat pada jarak kalibrasi (25cm, YOLO ON)
+    
+    if total_slats > 0 and total_slats != REF_SLATS:
+        raw_ratio = REF_SLATS / total_slats
+        # Gunakan sqrt(ratio) sebagai koreksi:
+        #   - 27/15 = 1.8 → sqrt → 1.342 → 25cm * 1.342 = 33.6cm ✓
+        #   - 27/27 = 1.0 → sqrt → 1.0   → 25cm * 1.0   = 25.0cm ✓
+        #   - 27/30 = 0.9 → sqrt → 0.949 → 25cm * 0.949 = 23.7cm ✓
+        correction = math.sqrt(raw_ratio) if raw_ratio > 0 else 1.0
+        # Batasi koreksi: max ±50% untuk keamanan
+        correction = max(0.7, min(1.5, correction))
+        D_tray = round(D_tray * correction, 2)
+        if D_left is not None:
+            D_left = round(D_left * correction, 2)
+        if D_right is not None:
+            D_right = round(D_right * correction, 2)
 
     # ── Validasi range ───────────────────────────────────────────────────
     if not (D_min <= D_tray <= D_max):

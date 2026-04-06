@@ -83,6 +83,10 @@ def run_live_camera(pipeline, camera_index=0):
         print(f"Error: Tidak bisa membuka kamera index {camera_index}")
         print("Tips: coba index lain (0, 1, 2) atau periksa koneksi kamera")
         return
+        
+    # Optimasi FPS: Set resolusi kamera ke 640x480 (mengurangi beban processing)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
     print(f"Live camera dimulai (index={camera_index})")
     print("Tekan 'q' untuk keluar | 's' untuk screenshot")
@@ -96,6 +100,10 @@ def run_live_camera(pipeline, camera_index=0):
         if not ret:
             print("Error: Gagal membaca frame dari kamera")
             break
+
+        # Pastikan frame adalah 640x480 (jika driver kamera mengabaikan cap.set)
+        if frame.shape[1] > 640:
+            frame = cv2.resize(frame, (640, 480))
 
         # Proses frame
         t_start = time.time()
