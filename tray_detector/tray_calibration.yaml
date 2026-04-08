@@ -1,0 +1,8 @@
+calibrated_at: '2026-04-08T15:02:08.981000+07:00'
+D_known_cm: 22.4
+P_real_cm: 0.489501
+ref_slats: 19
+median_pitch_px: 17.1
+theta_tilt_deg: 20.0
+camera_index: 2
+notes: Auto-generated oleh calibrate_tray.py

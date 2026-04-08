@@ -7,9 +7,10 @@ Tujuan utamanya adalah menentukan apakah tray berada pada posisi semestinya, mir
 ## Daftar Isi
 - [Fitur Utama](#fitur-utama)
 - [Prasyarat](#prasyarat)
+- [Kalibrasi Awal (Wajib Sekali)](#kalibrasi-awal-wajib-sekali)
 - [Cara Penggunaan (CLI)](#cara-penggunaan-cli)
 - [Pemilihan Metode Deteksi](#pemilihan-metode-deteksi)
-- [Konfigurasi Fisik (Kalibrasi)](#konfigurasi-fisik-kalibrasi)
+- [Konfigurasi Fisik (Manual)](#konfigurasi-fisik-manual)
 - [Struktur Output (JSON)](#struktur-output-json)
 
 ---
@@ -25,6 +26,40 @@ Pastikan environment sudah memiliki paket berikut (biasanya diinstal via environ
 pip install opencv-python numpy ultralytics pyyaml
 ```
 Sistem juga bergantung pada *weights* model pendeteksi ukuran kecil (`cup_detection_v3...pt`) yang harus ada dalam direktori `weights/` di root folder.
+
+## Kalibrasi Awal (Wajib Sekali)
+
+> **Penting:** Sebelum menggunakan tray detector, lakukan kalibrasi **sekali saja**. Kalibrasi ini menghitung konstanta fisik tray (`P_real_cm`, `ref_slats`) secara otomatis dan menyimpannya ke file `tray_calibration.yaml`.
+
+### Langkah-Langkah
+1. Letakkan **tray kosong** (tanpa gelas) di posisi normal.
+2. Ukur jarak dari kamera ke permukaan tray menggunakan penggaris/meteran (dalam cm).
+3. Jalankan script kalibrasi:
+
+```bash
+# Via kamera live (disarankan)
+python -m tray_detector.calibrate_tray --camera 0 --distance 22.1
+
+# Via gambar
+python -m tray_detector.calibrate_tray --image foto_tray.jpg --distance 22.1
+```
+
+4. Pada mode kamera: tekan `c` untuk capture & kalibrasi, atau `q` untuk batal.
+5. Hasil disimpan otomatis ke `tray_detector/tray_calibration.yaml`.
+
+### Contoh Output Kalibrasi
+```yaml
+calibrated_at: "2026-04-07T17:00:00+07:00"
+D_known_cm: 22.1
+P_real_cm: 0.6660
+ref_slats: 27
+median_pitch_px: 12.4
+theta_tilt_deg: 20.0
+```
+
+> **Catatan:** Kalibrasi ulang hanya diperlukan jika posisi kamera atau jenis tray berubah.
+
+---
 
 ## Cara Penggunaan (CLI)
 Anda dapat memanggil modul detektor langsung dari direktori root aplikasi utama (misal: `midas-coffee-machine`):
@@ -89,13 +124,13 @@ python -m tray_detector.run_tray_detector --camera 0 --lock-focus --focus-value 
 * **Method B**: **Rekomendasi Utama.** Menghitung jarak berdasarkan pitch sekat fisik (slats). Tahan terhadap distorsi perspektif.
 * **Method C**: Menggunakan prinsip Homografi / PnP dari 4 titik sudut tray yang terdeteksi.
 
-## Konfigurasi Fisik (Kalibrasi)
-Kualitas pengukuran *sepenuhnya bersandar pada Konstanta Fisik* pada `tray_detector/config.py`.
+## Konfigurasi Fisik (Manual)
 
-Untuk mengubah ketepatan ukuran sentimeter keluaran, sesuaikan nilai berikut di **baris 20-23** `config.py`:
+> Jika Anda sudah menjalankan kalibrasi (bagian di atas), Anda **tidak perlu** mengedit file ini. Nilai-nilai akan dibaca otomatis dari `tray_calibration.yaml`.
+
+Jika ingin override secara manual, edit `tray_detector/config.py`:
 ```python
 P_REAL_CM = 0.69         # Pitch Fisik aktual (jarak sekat ke sekat dalam cm).
-F_PIXEL = 662.17         # Focal length kamera.
 THETA_TILT_DEG = 20.0    # Sudut kemiringan kamera (derajat).
 ```
 

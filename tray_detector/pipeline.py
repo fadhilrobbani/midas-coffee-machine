@@ -74,7 +74,7 @@ class TrayDistancePipeline:
 
         # ── Temporal smoothing buffer (anti jitter) ──────────────────────
         from collections import deque
-        self._d_tray_history = deque(maxlen=7)  # Rolling window 7 frame
+        self._d_tray_history = deque(maxlen=15)  # Rolling window 15 frame
 
         # Pre-compute undistort maps for speed
         self._K = self.cfg["camera_matrix"]

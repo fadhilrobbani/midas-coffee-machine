@@ -153,64 +153,68 @@ def _split_raw_lines_by_zone(h_lines, glass_bbox, frame_width):
 
 def _compute_zone_D(y_mids, f_pixel, P_real_cm, theta_tilt_rad, D_min, D_max):
     """
-    Hitung D_tray untuk satu zona menggunakan dua metode:
-    1. Pitch-based: D = (f * P * cos(theta)) / median_pitch
-    2. Span-based:  D = (f * N_gaps * P * cos(theta)) / span_px
+    Hitung D_tray untuk satu zona menggunakan algoritma 1D Voting (Autocorrelation).
     
-    Metode span-based kebal terhadap auto-focus karena menggunakan
-    total rentang vertikal dari semua sekat yang terdeteksi.
+    1. Ekstrak semua jarak antar kombinasi garis (diffs).
+    2. Jadikan tiap diff sebagai kandidat pitch.
+    3. Voting: berapa banyak pasangan garis lain yang memiliki jarak yang sama (±2px)?
+    4. Kandidat dengan vote terbanyak adalah True Pitch.
+    
+    Metode ini kebal terhadap double-edges (Top & Bottom edge dari satu sekat).
+    True pitch (Top->Top & Bottom->Bottom) selalu mendapat 2x lipat vote dibanding gap palsu.
     """
-    if len(y_mids) < 3:
+    if len(y_mids) < 2:
         return None, 0, None
-    
+
     y_sorted = sorted(y_mids)
-    gaps = np.diff(y_sorted)
     
-    if len(gaps) == 0:
+    const = f_pixel * P_real_cm * math.cos(theta_tilt_rad)
+    
+    # Batas pitch yang realistis (D_tray biasanya 10cm - 45cm)
+    pitch_min = const / 45.0
+    pitch_max = const / 10.0
+
+    all_diffs = []
+    for i in range(len(y_sorted)):
+        for j in range(i + 1, min(i + 8, len(y_sorted))):
+            d = y_sorted[j] - y_sorted[i]
+            if pitch_min <= d <= pitch_max:
+                all_diffs.append(d)
+
+    if not all_diffs:
         return None, 0, None
-    
-    # IQR filtering pada gaps
-    q1, q3 = np.percentile(gaps, [25, 75])
-    iqr = q3 - q1
-    if iqr < 1e-6:
-        valid_gaps = gaps
-    else:
-        lower = q1 - 1.5 * iqr
-        upper = q3 + 1.5 * iqr
-        valid_gaps = gaps[(gaps >= lower) & (gaps <= upper)]
-    
-    if len(valid_gaps) == 0:
-        valid_gaps = gaps
-    
-    p_avg = float(np.median(valid_gaps))
-    
+
+    # Voting untuk mencari True Pitch
+    best_candidate = None
+    max_votes = -1
+
+    for candidate_p in all_diffs:
+        votes = 0
+        for d in all_diffs:
+            if abs(d - candidate_p) <= 2.0:
+                votes += 1
+                
+        if votes > max_votes:
+            max_votes = votes
+            best_candidate = candidate_p
+        elif votes == max_votes and candidate_p > best_candidate:
+            # Jika seri, pilih pitch yang lebih besar (True Pitch > Slat Thickness)
+            best_candidate = candidate_p
+
+    # Refine (rata-rata dari semua diff yang mendukung pemenang)
+    supporters = [d for d in all_diffs if abs(d - best_candidate) <= 2.0]
+    p_avg = float(np.mean(supporters))
+
     if p_avg < 1.0:
-        return None, len(valid_gaps), p_avg
-    
-    # ── Metode 1: Pitch-based (klasik) ───────────────────────────────────
-    D_pitch = (f_pixel * P_real_cm * math.cos(theta_tilt_rad)) / p_avg
-    
-    # ── Metode 2: Span-based (anti auto-focus) ──────────────────────────
-    # Gunakan rentang vertikal penuh dari sekat pertama sampai terakhir
-    span_px = y_sorted[-1] - y_sorted[0]
-    n_gaps = len(y_sorted) - 1  # jumlah celah = jumlah sekat - 1
-    
-    D_span = None
-    if span_px > 10 and n_gaps >= 2:
-        # Total jarak fisik dari sekat pertama ke terakhir = n_gaps * P_real_cm
-        total_physical_cm = n_gaps * P_real_cm
-        D_span = (f_pixel * total_physical_cm * math.cos(theta_tilt_rad)) / span_px
-    
-    # ── Pilih metode terbaik ─────────────────────────────────────────────
-    # Span-based lebih stabil terhadap auto-focus, jadi gunakan sebagai primary
-    if D_span is not None and D_min <= D_span <= D_max:
-        D_tray = D_span
-    elif D_min <= D_pitch <= D_max:
-        D_tray = D_pitch
-    else:
-        return None, len(valid_gaps), p_avg
-    
-    return round(D_tray, 2), len(valid_gaps), p_avg
+        return None, len(y_sorted), p_avg
+
+    # Kalkulasi final D_tray
+    D_tray = const / p_avg
+
+    if not (D_min <= D_tray <= D_max):
+        return None, len(y_sorted), p_avg
+
+    return round(D_tray, 2), len(y_sorted), p_avg
 
 
 def estimate_D_tray_method_B(frame, tray_mask, glass_bbox,
@@ -247,58 +251,48 @@ def estimate_D_tray_method_B(frame, tray_mask, glass_bbox,
     med = np.median(blurred)
     c_low = max(5, int(0.66 * med))
     c_high = min(255, int(1.33 * med))
-    # Batasi agar Canny tidak telalu tinggi saat gambar tidak rata (dark)
     c_low = min(canny_low, c_low)
     c_high = min(canny_high, c_high)
     
     edges = cv2.Canny(blurred, c_low, c_high)
 
-    # ── Terapkan Strict ROI Mask pada edges ──────────────────────────────
-    # Membuat dua kotak "sempit" tepat di kiri dan kanan gelas.
-    # Memotong margin atas/bawah 15% agar ujung rim solid tray diabaikan.
+    # ── Directional Gradient Masking ─────────────────────────────────────
+    # Sekat lebih terang dari celah (shadow). Top edge: dark -> light (+).
+    # Bottom edge: light -> dark (-). Kita hanya ambil top edge agar
+    # tidak ada double-detection (2 garis per 1 sekat) saat kamera dekat.
+    sobel_y = cv2.Sobel(blurred, cv2.CV_64F, 0, 1, ksize=3)
+    # Hapus edges yang berasal dari transisi negatif (light -> dark)
+    edges[sobel_y < 0] = 0
+
+    # ── Terapkan Strict ROI Mask pada edges (PUNCH-OUT Mode) ───────────
+    # Gunakan fixed "wing" zones (33%-79% vertikal, skip tengah ±80px).
+    # Glass bbox di-punch-out (dihapus) dari mask, bukan mempersempit zona.
+    box_y1 = int(h * 0.33)
+    box_y2 = int(h * 0.79)
+    mid_x = w // 2
+    skip_radius = 80
+    lx1 = max(0, mid_x - skip_radius - 200)
+    lx2 = max(0, mid_x - skip_radius)
+    rx1 = min(w, mid_x + skip_radius)
+    rx2 = min(w, rx1 + 200)
+
+    strict_mask = np.zeros_like(edges)
+    if lx2 > lx1:
+        strict_mask[box_y1:box_y2, lx1:lx2] = 255
+    if rx2 > rx1:
+        strict_mask[box_y1:box_y2, rx1:rx2] = 255
+
+    # Punch-out: hapus area glass bbox + margin dari mask
     if glass_bbox is not None:
         gx1, gy1, gx2, gy2 = glass_bbox
-        g_h = gy2 - gy1
-        
-        margin_y = int(g_h * 0.15)
-        box_y1 = max(0, int(gy1 + margin_y))
-        box_y2 = min(h, int(gy2 - margin_y))
-        
-        search_w = 250
-        lx1, lx2 = max(0, int(gx1 - search_w)), int(gx1 - 5)
-        rx1, rx2 = int(gx2 + 5), min(w, int(gx2 + search_w))
-        
-        strict_mask = np.zeros_like(edges)
-        if lx2 > lx1:
-            strict_mask[box_y1:box_y2, lx1:lx2] = 255
-        if rx2 > rx1:
-            strict_mask[box_y1:box_y2, rx1:rx2] = 255
-            
-        edges = cv2.bitwise_and(edges, strict_mask)
-    else:
-        # Fallback jika tidak ada gelas:
-        # 1. Buang secara paksa noise statis dari dinding atas & rim plastik bawah
-        # 2. Pura-pura ada gelas di tengah tray untuk memotong pola bundar drain hole!
-        # Ini akan memaksa algoritma hanya mengecek sisi paling kiri dan paling kanan.
-        box_y1 = int(h * 0.33)
-        box_y2 = int(h * 0.79)
-        
-        mid_x = w // 2
-        # Asumsikan diameter drain hole ~ 160 px, kita lewati 80 px ke kiri & kanan
-        skip_radius = 80
-        lx2 = max(0, mid_x - skip_radius)
-        lx1 = max(0, lx2 - 200)  # Box kiri selebar 200px
-        
-        rx1 = min(w, mid_x + skip_radius)
-        rx2 = min(w, rx1 + 200)
-        
-        strict_mask = np.zeros_like(edges)
-        if lx2 > lx1:
-            strict_mask[box_y1:box_y2, lx1:lx2] = 255
-        if rx2 > rx1:
-            strict_mask[box_y1:box_y2, rx1:rx2] = 255
-            
-        edges = cv2.bitwise_and(edges, strict_mask)
+        gm = 15  # margin ekstra
+        gx1m = max(0, int(gx1 - gm))
+        gy1m = max(0, int(gy1 - gm))
+        gx2m = min(w, int(gx2 + gm))
+        gy2m = min(h, int(gy2 + gm))
+        strict_mask[gy1m:gy2m, gx1m:gx2m] = 0
+
+    edges = cv2.bitwise_and(edges, strict_mask)
 
     lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi / 180,
                             threshold=hough_threshold,

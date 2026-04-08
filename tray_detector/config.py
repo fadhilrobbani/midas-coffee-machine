@@ -15,6 +15,7 @@ import yaml
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DEFAULT_CALIB_PATH = os.path.join(ROOT_DIR, "calibration_params.yml")
 DEFAULT_WEIGHTS_PATH = os.path.join(ROOT_DIR, "weights", "cup_detection_v3_12_s_best.pt")
+DEFAULT_TRAY_CALIB_PATH = os.path.join(os.path.dirname(__file__), "tray_calibration.yaml")
 
 # ── Dimensi fisik tray Jura (cm) — diukur dari unit fisik ────────────────
 P_REAL_CM = 0.69         # jarak aktual kalibrasi (agar test_tray terbaca 25.0cm)
@@ -65,12 +66,49 @@ def load_calibration(params_path=None):
     }
 
 
-def get_default_config(params_path=None):
+def load_tray_calibration(tray_calib_path=None):
+    """
+    Memuat kalibrasi tray dari YAML jika file ada.
+
+    Returns:
+        dict atau None jika file tidak ditemukan.
+    """
+    path = tray_calib_path or DEFAULT_TRAY_CALIB_PATH
+    if not os.path.isfile(path):
+        return None
+
+    with open(path, "r") as f:
+        data = yaml.safe_load(f)
+
+    return data
+
+
+def get_default_config(params_path=None, tray_calib_path=None):
     """
     Mengembalikan dict konfigurasi lengkap yang dibutuhkan oleh pipeline.
+    Jika tray_calibration.yaml ada, nilai-nilainya akan di-override.
     """
     calib = load_calibration(params_path)
-    theta_rad = math.radians(THETA_TILT_DEG)
+
+    # ── Load kalibrasi tray (override jika ada) ──────────────────────────
+    tray_calib = load_tray_calibration(tray_calib_path)
+
+    p_real = P_REAL_CM
+    theta_deg = THETA_TILT_DEG
+    ref_slats = 27  # default fallback
+
+    if tray_calib:
+        p_real = tray_calib.get("P_real_cm", P_REAL_CM)
+        theta_deg = tray_calib.get("theta_tilt_deg", THETA_TILT_DEG)
+        ref_slats = tray_calib.get("ref_slats", 27)
+        print(f"[CONFIG] ✅ Kalibrasi tray dimuat: P_real={p_real:.4f}, "
+              f"ref_slats={ref_slats}, θ={theta_deg}°")
+    else:
+        print(f"[CONFIG] ⚠️  File kalibrasi tray tidak ditemukan.")
+        print(f"[CONFIG]    Menggunakan default: P_real={p_real}, ref_slats={ref_slats}")
+        print(f"[CONFIG]    Jalankan: python -m tray_detector.calibrate_tray --help")
+
+    theta_rad = math.radians(theta_deg)
 
     return {
         # Kalibrasi kamera
@@ -78,12 +116,13 @@ def get_default_config(params_path=None):
         "dist_coeffs": calib["dist_coeffs"],
         "f_pixel": calib["f_pixel"],
 
-        # Dimensi fisik
-        "P_real_cm": P_REAL_CM,
+        # Dimensi fisik (dari kalibrasi tray atau default)
+        "P_real_cm": p_real,
         "W_tray_cm": W_TRAY_CM,
         "L_tray_cm": L_TRAY_CM,
-        "theta_tilt_deg": THETA_TILT_DEG,
+        "theta_tilt_deg": theta_deg,
         "theta_tilt_rad": theta_rad,
+        "ref_slats": ref_slats,
 
         # Validasi
         "D_min_cm": D_MIN_CM,
