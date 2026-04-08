@@ -17,6 +17,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime
 
 import cv2
 
@@ -77,6 +78,9 @@ def process_directory(pipeline, input_dir, output_dir):
 
 def run_live_camera(pipeline, camera_index=0, lock_focus=False, focus_value=0):
     """Live camera mode dengan overlay real-time."""
+
+    SCREENSHOT_DIR= "tray_detector/results/live_cam"
+    os.makedirs(SCREENSHOT_DIR, exist_ok=True)
     from tray_detector.camera_utils import init_camera
     
     cap = init_camera(
@@ -138,7 +142,8 @@ def run_live_camera(pipeline, camera_index=0, lock_focus=False, focus_value=0):
             break
         elif key == ord('s'):
             # Screenshot
-            ss_path = f"tray_detector_screenshot_{int(time.time())}.jpg"
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
+            ss_path = f"{SCREENSHOT_DIR}/tray_detector_{timestamp}.jpg"
             cv2.imwrite(ss_path, annotated)
             _print_result(result, source="screenshot")
             print(f"Screenshot disimpan: {ss_path}")
