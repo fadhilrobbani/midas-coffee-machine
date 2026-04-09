@@ -305,7 +305,7 @@ def estimate_D_tray_method_B(frame, tray_mask, glass_bbox,
 
     if len(h_lines) < min_lines:
         return _empty_result(
-            f"Hanya {len(h_lines)} garis horizontal (min={min_lines})",
+            f"Only {len(h_lines)} horizontal lines (min={min_lines})",
             debug_raw=debug_raw,
         )
 
@@ -346,11 +346,11 @@ def estimate_D_tray_method_B(frame, tray_mask, glass_bbox,
     elif left_valid:
         D_tray = D_left
         status = "SINGLE_ZONE"
-        notes = "Hanya zona kiri valid"
+        notes = "Only left zone valid"
     elif right_valid:
         D_tray = D_right
         status = "SINGLE_ZONE"
-        notes = "Hanya zona kanan valid"
+        notes = "Only right zone valid"
     else:
         # Fallback: coba semua garis digabung jadi satu
         all_merged = _cluster_lines(h_lines, cluster_gap=6.0)

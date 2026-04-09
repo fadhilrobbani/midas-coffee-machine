@@ -92,10 +92,14 @@ def run_live_camera(pipeline, camera_index=0, lock_focus=False, focus_value=0):
     if cap is None:
         return
 
-    print(f"Live camera dimulai (index={camera_index})")
-    print("Tekan 'q' untuk keluar | 's' untuk screenshot")
+    print(f"Live camera started (index={camera_index})")
+    print("Press 'q' to exit | 's' to screenshot | 'r' to start/stop recording | 'p' to pause recording")
     if lock_focus:
         print(f"🔒 Focus locked at value={focus_value}")
+
+    video_writer = None
+    is_recording = False
+    is_paused = False
 
     fps_counter = 0
     fps_time = time.time()
@@ -104,7 +108,7 @@ def run_live_camera(pipeline, camera_index=0, lock_focus=False, focus_value=0):
     while True:
         ret, frame = cap.read()
         if not ret:
-            print("Error: Gagal membaca frame dari kamera")
+            print("Error: Failed to read frame from camera")
             break
 
         # Pastikan frame adalah 640x480 (jika driver kamera mengabaikan cap.set)
@@ -133,6 +137,20 @@ def run_live_camera(pipeline, camera_index=0, lock_focus=False, focus_value=0):
         cv2.putText(annotated, fps_txt, (10, h - 15),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 255, 150), 1)
 
+        if is_recording and video_writer is not None:
+            if is_paused:
+                rec_txt = "[PAUSED]"
+                color = (0, 255, 255)  # Yellow
+            else:
+                rec_txt = "[REC]"
+                color = (0, 0, 255)  # Red
+            
+            cv2.putText(annotated, rec_txt, (w - 110, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            
+            if not is_paused:
+                video_writer.write(annotated)
+
         # Display
         cv2.imshow("Tray Detector - Live", annotated)
 
@@ -140,6 +158,27 @@ def run_live_camera(pipeline, camera_index=0, lock_focus=False, focus_value=0):
         if key == ord('q'):
             print("Live camera dihentikan.")
             break
+        elif key == ord('r'):
+            if not is_recording:
+                timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+                vid_path = os.path.join(SCREENSHOT_DIR, f"record_{timestamp}.mp4")
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                video_writer = cv2.VideoWriter(vid_path, fourcc, 15.0, (640, 480))
+                is_recording = True
+                is_paused = False
+                print(f"🎥 Start recording video to: {vid_path}")
+            else:
+                is_recording = False
+                is_paused = False
+                if video_writer is not None:
+                    video_writer.release()
+                    video_writer = None
+                print("🎥 Recording video stopped & saved.")
+        elif key == ord('p'):
+            if is_recording:
+                is_paused = not is_paused
+                state_str = "paused" if is_paused else "resumed"
+                print(f"🎥 Recording video {state_str}.")
         elif key == ord('s'):
             # Screenshot
             timestamp = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
@@ -148,19 +187,21 @@ def run_live_camera(pipeline, camera_index=0, lock_focus=False, focus_value=0):
             ss_path = f"{SCREENSHOT_DIR}/tray_detector_{d_str}_{timestamp}.jpg"
             cv2.imwrite(ss_path, annotated)
             _print_result(result, source="screenshot")
-            print(f"Screenshot disimpan: {ss_path}")
+            print(f"Screenshot saved: {ss_path}")
 
+    if video_writer is not None:
+        video_writer.release()
     cap.release()
     cv2.destroyAllWindows()
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Pipeline Deteksi Jarak Kamera ke Tray (D_tray_cm)",
+        description="Camera to Tray Distance Detection (D_tray_cm)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Contoh penggunaan:
-  # Proses satu gambar
+Example usage:
+  # Process single image
   python -m tray_detector.run_tray_detector --image foto_tray.jpg
 
   # Live camera (default index 0)
@@ -211,7 +252,7 @@ Contoh penggunaan:
     os.makedirs(output_dir, exist_ok=True)
 
     # Inisialisasi pipeline
-    print("Menginisialisasi pipeline...")
+    print("Initializing pipeline...")
     pipeline = TrayDistancePipeline(
         weights_path=args.weights,
         params_path=args.params,
