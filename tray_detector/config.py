@@ -96,13 +96,15 @@ def get_default_config(params_path=None, tray_calib_path=None):
     p_real = P_REAL_CM
     theta_deg = THETA_TILT_DEG
     ref_slats = 27  # default fallback
+    d_known = None
 
     if tray_calib:
         p_real = tray_calib.get("P_real_cm", P_REAL_CM)
         theta_deg = tray_calib.get("theta_tilt_deg", THETA_TILT_DEG)
         ref_slats = tray_calib.get("ref_slats", 27)
+        d_known = tray_calib.get("D_known_cm", None)
         print(f"[CONFIG] ✅ Kalibrasi tray dimuat: P_real={p_real:.4f}, "
-              f"ref_slats={ref_slats}, θ={theta_deg}°")
+              f"ref_slats={ref_slats}, θ={theta_deg}°, D_known={d_known}cm")
     else:
         print(f"[CONFIG] ⚠️  File kalibrasi tray tidak ditemukan.")
         print(f"[CONFIG]    Menggunakan default: P_real={p_real}, ref_slats={ref_slats}")
@@ -123,6 +125,7 @@ def get_default_config(params_path=None, tray_calib_path=None):
         "theta_tilt_deg": theta_deg,
         "theta_tilt_rad": theta_rad,
         "ref_slats": ref_slats,
+        "D_known_cm": d_known,
 
         # Validasi
         "D_min_cm": D_MIN_CM,

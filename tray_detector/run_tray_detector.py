@@ -143,7 +143,9 @@ def run_live_camera(pipeline, camera_index=0, lock_focus=False, focus_value=0):
         elif key == ord('s'):
             # Screenshot
             timestamp = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
-            ss_path = f"{SCREENSHOT_DIR}/tray_detector_{timestamp}.jpg"
+            d_calib = pipeline.cfg.get("D_known_cm", None)
+            d_str = f"{d_calib}cm" if d_calib is not None else "NA"
+            ss_path = f"{SCREENSHOT_DIR}/tray_detector_{d_str}_{timestamp}.jpg"
             cv2.imwrite(ss_path, annotated)
             _print_result(result, source="screenshot")
             print(f"Screenshot disimpan: {ss_path}")
