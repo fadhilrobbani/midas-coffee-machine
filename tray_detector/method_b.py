@@ -223,7 +223,8 @@ def estimate_D_tray_method_B(frame, tray_mask, glass_bbox,
                               hough_threshold=25, hough_min_line_length=25,
                               hough_max_line_gap=15,
                               angle_tol_deg=10.0, min_lines=3,
-                              D_min=5.0, D_max=100.0):
+                              D_min=5.0, D_max=100.0,
+                              ref_slats=27):
     """
     Estimasi D_tray menggunakan pitch sekat horizontal tray.
 
@@ -387,7 +388,7 @@ def estimate_D_tray_method_B(frame, tray_mask, glass_bbox,
     # sebagai proxy untuk koreksi.
     # Kalibrasi: pada D=25cm dengan YOLO aktif, terdeteksi ~27 sekat total.
     total_slats = len(left_merged) + len(right_merged)
-    REF_SLATS = 27  # jumlah sekat pada jarak kalibrasi (25cm, YOLO ON)
+    REF_SLATS = ref_slats  # jumlah sekat pada jarak kalibrasi
     
     if total_slats > 0 and total_slats != REF_SLATS:
         raw_ratio = REF_SLATS / total_slats

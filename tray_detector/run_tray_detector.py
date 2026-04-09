@@ -221,16 +221,18 @@ def run_live_camera(pipeline, camera_index=0, lock_focus=False, focus_value=0):
     print("\n" + "="*50)
     print("🎥 LIVE CAMERA SESSION REPORT 🎥")
     print("="*50)
-    print(f"Total frame processed   : {stats_total_frames}")
+    print(f"Total frames processed  : {stats_total_frames}")
     if stats_valid_frames > 0:
         avg_d = stats_d_tray_sum / stats_valid_frames
-        print(f"Frame valid (ada D)    : {stats_valid_frames} ({(stats_valid_frames/max(1, stats_total_frames))*100:.1f}%)")
+        print(f"Valid Frames (with D)   : {stats_valid_frames} ({(stats_valid_frames/max(1, stats_total_frames))*100:.1f}%)")
         print(f"Average Distance (D)    : {avg_d:.2f} cm")
-        print(f"Minimum Distance          : {stats_d_tray_min:.2f} cm")
-        print(f"Maximum Distance         : {stats_d_tray_max:.2f} cm")
+        print(f"Minimum Distance        : {stats_d_tray_min:.2f} cm")
+        print(f"Maximum Distance        : {stats_d_tray_max:.2f} cm")
         print(f"Outlier Spikes rejected : {stats_spike_rejected}")
+        print("-" * 50)
+        print(f"🎯 FINAL ESTIMATED TRAY DISTANCE: {avg_d:.2f} cm 🎯")
     else:
-        print("Frame valid            : 0 (Tidak ada tray terdeteksi)")
+        print("Valid Frames            : 0 (No tray detected)")
     print("="*50 + "\n")
 
 

@@ -217,6 +217,7 @@ class TrayDistancePipeline:
                 min_lines=cfg["min_lines_per_zone"],
                 D_min=cfg["D_min_cm"],
                 D_max=cfg["D_max_cm"],
+                ref_slats=cfg.get("ref_slats", 27),
             )
 
         if m in ("AUTO", "C"):
