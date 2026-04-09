@@ -105,6 +105,14 @@ def run_live_camera(pipeline, camera_index=0, lock_focus=False, focus_value=0):
     fps_time = time.time()
     fps_display = 0.0
 
+    # === Report Statistics ===
+    stats_total_frames = 0
+    stats_valid_frames = 0
+    stats_d_tray_sum = 0.0
+    stats_d_tray_min = float('inf')
+    stats_d_tray_max = float('-inf')
+    stats_spike_rejected = 0
+
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -119,6 +127,21 @@ def run_live_camera(pipeline, camera_index=0, lock_focus=False, focus_value=0):
         t_start = time.time()
         result = pipeline.process_frame(frame)
         t_process = time.time() - t_start
+
+        # === Update statistics ===
+        stats_total_frames += 1
+        d_val = result.get("D_tray_cm")
+        if d_val is not None:
+            stats_valid_frames += 1
+            stats_d_tray_sum += d_val
+            if d_val < stats_d_tray_min:
+                stats_d_tray_min = d_val
+            if d_val > stats_d_tray_max:
+                stats_d_tray_max = d_val
+                
+        notes = result.get("notes") or ""
+        if "Spike detected" in notes:
+            stats_spike_rejected += 1
 
         # Annotasi
         annotated = pipeline.annotate_frame(frame, result)
@@ -193,6 +216,22 @@ def run_live_camera(pipeline, camera_index=0, lock_focus=False, focus_value=0):
         video_writer.release()
     cap.release()
     cv2.destroyAllWindows()
+
+    # === Cetak laporan akhir ===
+    print("\n" + "="*50)
+    print("🎥 LIVE CAMERA SESSION REPORT 🎥")
+    print("="*50)
+    print(f"Total frame diproses   : {stats_total_frames}")
+    if stats_valid_frames > 0:
+        avg_d = stats_d_tray_sum / stats_valid_frames
+        print(f"Frame valid (ada D)    : {stats_valid_frames} ({(stats_valid_frames/max(1, stats_total_frames))*100:.1f}%)")
+        print(f"Rata-rata jarak (D)    : {avg_d:.2f} cm")
+        print(f"Jarak minimum          : {stats_d_tray_min:.2f} cm")
+        print(f"Jarak maksimum         : {stats_d_tray_max:.2f} cm")
+        print(f"Outlier Spikes ditolak : {stats_spike_rejected}")
+    else:
+        print("Frame valid            : 0 (Tidak ada tray terdeteksi)")
+    print("="*50 + "\n")
 
 
 def main():

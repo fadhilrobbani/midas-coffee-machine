@@ -280,12 +280,25 @@ class TrayDistancePipeline:
             "tray_bbox": tray_bbox,
             "glass_bbox": glass_bbox,
         }
-        # ── Temporal Smoothing (anti jitter untuk live cam) ────────────────
+        # ── Temporal Smoothing & Outlier Rejection (anti jitter) ───────────
         raw_d = fused.get("D_tray_cm")
         if raw_d is not None:
+            import numpy as _np
+            
+            # Outlier Rejection: Check for abnormal high spikes
+            if len(self._d_tray_history) >= 3:
+                current_median = float(_np.median(list(self._d_tray_history)))
+                jump_threshold = 10.0  # Max valid jump in cm between frames
+                
+                # Jika deteksi baru melonjak tajam ke atas, kita abaikan/tahan
+                if raw_d > current_median + jump_threshold:
+                    notes = fused.get("notes") or ""
+                    fused["notes"] = (notes + f" | Spike detected ({raw_d}->{current_median})").strip(" |")
+                    # Bisa tambahkan status khusus atau biarkan OK dengan notes
+                    raw_d = current_median
+
             self._d_tray_history.append(raw_d)
             if len(self._d_tray_history) >= 3:
-                import numpy as _np
                 smoothed = float(_np.median(list(self._d_tray_history)))
                 fused["D_tray_cm"] = round(smoothed, 1)
 
