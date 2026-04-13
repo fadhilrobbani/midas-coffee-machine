@@ -16,9 +16,12 @@ Tujuan utamanya adalah menentukan apakah tray berada pada posisi semestinya, mir
 ---
 
 ## Fitur Utama
-1. **Deteksi Berbasis Gelas (YOLO):** Mampu mengisolasi pendeteksian hanya di sisi luar gelas kuning melalui masking dinamis yang memotong bentuk gelas. Canny Edge tidak akan terkecoh pantulan di dalam gelas.
-2. **Pendeteksian Empty Tray (Fallback):** Bila gelas tidak ditemukan, sistem otomatis mengaktifkan heuristik kotak potong vertikal (crop atas/bawah dan mengabaikan pinggir mangkuk saringan di tengah) untuk menghindari salah ukur dari tepi kerangka tray mati.
-3. **Adaptive Thresholding & NMS:** Fitur *Spatial Non-Maximum Suppression* secara otomatis akan memangkas deteksi garis kembar pada bagian atas & bawah dari 1 batang sekat yang sama (memastikan 1 baris sekat hijau tebal murni hanya dihitung 1 pitch).
+1. **Deteksi Berbasis Gelas (YOLO):** Mampu mengisolasi pendeteksian hanya di sisi luar gelas melalui masking dinamis. Canny Edge tidak akan terkecoh pantulan di dalam gelas.
+2. **Pendeteksian Empty Tray (Fallback):** Bila gelas tidak ditemukan, sistem otomatis mengaktifkan heuristik ROI untuk menghindari salah ukur dari tepi kerangka tray.
+3. **Adaptive Thresholding & NMS:** Menghindari deteksi garis ganda pada satu sekat tray yang sama.
+4. **Temporal Smoothing & Outlier Rejection:** Menggunakan *rolling median* untuk mengurangi jitter (getaran pembacaan) dan membuang lonjakan jarak (*spikes*) yang tidak wajar.
+5. **Kompensasi Distorsi:** Menggunakan *undistort maps* yang dihitung di awal untuk memastikan geometri garis tetap lurus di seluruh frame.
+6. **Live Video Recording:** Fitur untuk merekam hasil deteksi langsung ke file video (.mp4) untuk kebutuhan *debugging* atau *reporting*.
 
 ## Prasyarat
 Pastikan environment sudah memiliki paket berikut (biasanya diinstal via environment pip/conda utama):
@@ -98,7 +101,24 @@ python -m tray_detector.run_tray_detector --camera 0 --lock-focus --focus-value 
 
 #### Shortcut Keyboard (Live Mode)
 * `q`: Keluar dari aplikasi.
-* `s`: Ambil screenshot (disimpan ke root folder).
+* `s`: Ambil screenshot (disimpan ke `tray_detector/results/live_cam`).
+* `r`: Mulai / Berhenti merekam video.
+* `p`: Pause / Resume rekaman video.
+
+---
+
+## Fitur Perekaman & Reporting
+
+### 1. Perekaman Video (Live)
+Saat berada dalam mode kamera, Anda dapat merekam feed video yang sudah dianotasi dengan menekan tombol `r`. File akan disimpan secara otomatis di folder `tray_detector/results/live_cam/` dengan format `.mp4`.
+
+### 2. Live Camera Session Report
+Setelah Anda keluar dari mode Live Camera (`q`), sistem akan mencetak ringkasan statistik sesi tersebut di terminal, meliputi:
+* Total frames yang diproses.
+* Persentase frame valid (tray terdeteksi).
+* Rata-rata jarak (D_tray) selama sesi.
+* Nilai Minimum & Maksimum jarak yang terbaca.
+* Jumlah lonjakan (*outlier spikes*) yang berhasil ditolak.
 
 ---
 
@@ -109,13 +129,13 @@ python -m tray_detector.run_tray_detector --camera 0 --lock-focus --focus-value 
 | `--image` | Path ke satu file gambar untuk diproses. |
 | `--input_dir` | Direktori berisi kumpulan gambar untuk batch processing. |
 | `--camera [index]` | Aktifkan mode live (default index 0 jika tidak diisi). |
-| `--output_dir` | (Opsional) Folder tujuan visualisasi. Default: `tray_detector/results`. |
+| `--output_dir` | Folder output visualisasi. Default: `tray_detector/results`. |
 | `--method` | Pilihan: `auto` (fusi), `A` (apparent), `B` (pitch), `C` (PnP). Default: `auto`. |
 | `--no-yolo` | Matikan YOLO. Gunakan full frame sebagai ROI (terbaik untuk tray kosong). |
-| `--weights` | (Opsional) Path ke file YOLO weights `.pt` kustom. |
-| `--params` | (Opsional) Path ke file calibration `.yaml` kustom. |
-| `--lock-focus` | Menonaktifkan auto-focus kamera. Penting untuk kestabilan pembacaan. |
-| `--focus-value` | Nilai fokus tetap (0-255). Nilai `0` biasanya berarti *infinity*. |
+| `--weights` | Path ke file YOLO weights `.pt`. |
+| `--params` | Path ke file calibration `.yaml`. |
+| `--lock-focus` | Matikan auto-focus kamera. **Sangat disarankan** untuk kestabilan pembacaan. |
+| `--focus-value` | Nilai fokus tetap (0-255). Default `0` (infinity) — ideal untuk posisi overhead. |
 
 ---
 
@@ -136,7 +156,9 @@ THETA_TILT_DEG = 20.0    # Sudut kemiringan kamera (derajat).
 
 ## Struktur Output (JSON)
 Output JSON mencakup:
-* `D_tray_cm`: Estimasi jarak akhir (rata-rata atau fusi).
-* `D_left_cm` / `D_right_cm`: Jarak spesifik di sisi kiri/kanan gelas (untuk cek kemiringan).
+* `D_tray_cm`: Estimasi jarak akhir (setelah smoothing & fusi).
+* `D_left_cm` / `D_right_cm`: Jarak spesifik di sisi kiri/kanan gelas.
+* `lines_left` / `lines_right`: Jumlah sekat yang terdeteksi di tiap zona.
 * `confidence`: Skor kepercayaan (0.0 - 1.0).
 * `status`: `"OK"` atau `"INSUFFICIENT_DATA"`.
+* `notes`: Catatan tambahan (misal: "Spike detected").
