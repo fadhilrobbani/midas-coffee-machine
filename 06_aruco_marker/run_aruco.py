@@ -103,12 +103,17 @@ def run_live_camera(detector, camera_index=0, lock_focus=False, focus_value=0):
     fps_time = time.time()
     fps_display = 0.0
 
-    # Statistics
+    # Statistics & Reporting
     stats_total = 0
     stats_detected = 0
     stats_d_sum = 0.0
     stats_d_min = float('inf')
     stats_d_max = float('-inf')
+    
+    # History for reporting
+    distance_history = []
+    frame_indices = []
+    screenshot_paths = []
 
     while True:
         ret, frame = cap.read()
@@ -132,6 +137,10 @@ def run_live_camera(detector, camera_index=0, lock_focus=False, focus_value=0):
             stats_d_sum += d_val
             stats_d_min = min(stats_d_min, d_val)
             stats_d_max = max(stats_d_max, d_val)
+            
+            # Record history
+            distance_history.append(d_val)
+            frame_indices.append(stats_total)
 
         # Annotate
         annotated = detector.annotate_frame(frame, results)
@@ -164,33 +173,157 @@ def run_live_camera(detector, camera_index=0, lock_focus=False, focus_value=0):
             break
         elif key == ord('s'):
             timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-            ss_path = os.path.join(SCREENSHOT_DIR,
-                                   f"aruco_capture_{timestamp}.jpg")
+            ss_filename = f"aruco_capture_{timestamp}.jpg"
+            ss_path = os.path.join(SCREENSHOT_DIR, ss_filename)
             cv2.imwrite(ss_path, annotated)
+            screenshot_paths.append(ss_path)
             _print_result(results, source="screenshot")
             print(f"Screenshot saved: {ss_path}")
 
     cap.release()
     cv2.destroyAllWindows()
 
-    # Session report
+    # Calculate final stats
+    avg_d = stats_d_sum / stats_detected if stats_detected > 0 else 0.0
+    
+    # Generate report data
+    report_stats = {
+        "total_frames": stats_total,
+        "detected_frames": stats_detected,
+        "avg_distance": round(avg_d, 2),
+        "min_distance": round(stats_d_min, 2) if stats_detected > 0 else 0.0,
+        "max_distance": round(stats_d_max, 2) if stats_detected > 0 else 0.0,
+        "spread": round(stats_d_max - stats_d_min, 2) if stats_detected > 0 else 0.0,
+        "detection_rate": round(stats_detected / max(1, stats_total) * 100, 1),
+        "dictionary": detector.dictionary_name,
+        "marker_size_cm": detector.marker_size_cm,
+        "focal_length": round(detector.camera_matrix[0, 0], 1),
+        "lock_focus": lock_focus
+    }
+
+    # Print to terminal
     print(f"\n{'='*50}")
     print("📐 ARUCO MARKER SESSION REPORT 📐")
     print(f"{'='*50}")
-    print(f"Total frames processed  : {stats_total}")
+    print(f"Total frames processed  : {report_stats['total_frames']}")
     if stats_detected > 0:
-        avg_d = stats_d_sum / stats_detected
-        pct = stats_detected / max(1, stats_total) * 100
-        print(f"Frames with marker      : {stats_detected} ({pct:.1f}%)")
-        print(f"Average Distance        : {avg_d:.2f} cm")
-        print(f"Minimum Distance        : {stats_d_min:.2f} cm")
-        print(f"Maximum Distance        : {stats_d_max:.2f} cm")
-        print(f"Distance Range (spread) : {stats_d_max - stats_d_min:.2f} cm")
+        print(f"Frames with marker      : {report_stats['detected_frames']} ({report_stats['detection_rate']}%)")
+        print(f"Average Distance        : {report_stats['avg_distance']} cm")
+        print(f"Minimum Distance        : {report_stats['min_distance']} cm")
+        print(f"Maximum Distance        : {report_stats['max_distance']} cm")
+        print(f"Distance Range (spread) : {report_stats['spread']} cm")
         print("-" * 50)
-        print(f"🎯 FINAL ESTIMATED DISTANCE: {avg_d:.2f} cm 🎯")
+        print(f"🎯 FINAL ESTIMATED DISTANCE: {report_stats['avg_distance']} cm 🎯")
     else:
         print("Frames with marker      : 0 (No marker detected)")
     print(f"{'='*50}\n")
+    
+    # Generate Markdown Report
+    _generate_markdown_report(report_stats, distance_history, frame_indices, screenshot_paths)
+
+
+def _generate_markdown_report(stats, distances, frames, screenshots):
+    """Generate Markdown report with matplotlib chart."""
+    import matplotlib.pyplot as plt
+    import shutil
+
+    # 1. Create timestamped folder
+    # Format: YYYY-MM-DD_HH-mm-ss
+    timestamp_folder = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    report_dir = os.path.join(_SCRIPT_DIR, "results", "report", timestamp_folder)
+    os.makedirs(report_dir, exist_ok=True)
+    
+    print(f"Generating report in: {report_dir}")
+
+    # 2. Generate distance chart
+    chart_filename = "distance_chart.png"
+    chart_path = os.path.join(report_dir, chart_filename)
+    
+    if distances:
+        plt.figure(figsize=(10, 6))
+        plt.plot(frames, distances, label='Distance (cm)', color='#1f77b4', linewidth=1.5)
+        plt.axhline(y=stats['avg_distance'], color='r', linestyle='--', label=f"Avg: {stats['avg_distance']}cm")
+        
+        plt.title(f"ArUco Distance Tracking Session\n({timestamp_folder})")
+        plt.xlabel("Frame Number")
+        plt.ylabel("Distance (cm)")
+        plt.grid(True, linestyle=':', alpha=0.7)
+        plt.legend()
+        
+        # Adjust Y-axis to see variations better
+        if stats['spread'] > 0:
+            margin = max(1.0, stats['spread'] * 0.5)
+            plt.ylim(stats['min_distance'] - margin, stats['max_distance'] + margin)
+            
+        plt.tight_layout()
+        plt.savefig(chart_path)
+        plt.close()
+        print(f"✅ Chart saved: {chart_filename}")
+
+    # 3. Copy screenshots to report folder for local linking
+    local_screenshots = []
+    if screenshots:
+        ss_subfolder = os.path.join(report_dir, "screenshots")
+        os.makedirs(ss_subfolder, exist_ok=True)
+        for i, src in enumerate(screenshots):
+            fname = os.path.basename(src)
+            dst = os.path.join(ss_subfolder, fname)
+            shutil.copy2(src, dst)
+            local_screenshots.append(os.path.join("screenshots", fname))
+        print(f"✅ {len(screenshots)} screenshots copied to report folder")
+
+    # 4. Write Markdown file
+    md_path = os.path.join(report_dir, "report.md")
+    
+    # Calculate Std Dev for the session
+    import numpy as np
+    std_dev = round(float(np.std(distances)), 2) if distances else 0.0
+    
+    with open(md_path, "w") as f:
+        f.write(f"# ArUco Depth Verification: Session Report\n")
+        f.write(f"Generated on: {timestamp_folder.replace('_', ' ')}\n\n")
+        
+        f.write(f"## 1. Session Parameters\n")
+        f.write(f"Parameters used during this ArUco detection session:\n\n")
+        f.write(f"| Parameter | Value |\n")
+        f.write(f"| :--- | :--- |\n")
+        f.write(f"| **ArUco Dictionary** | {stats.get('dictionary', 'N/A')} |\n")
+        f.write(f"| **Physical Marker Size** | {stats.get('marker_size_cm', 'N/A')} cm |\n")
+        f.write(f"| **Focal Length (K)** | {stats.get('focal_length', 'N/A')} px |\n")
+        f.write(f"| **Lock Focus** | {'ON' if stats.get('lock_focus') else 'OFF'} |\n\n")
+
+        f.write(f"## 2. Global Stability Summary\n")
+        f.write(f"Statistical summary of distance measurements gathered over {stats['total_frames']} frames:\n\n")
+        f.write(f"| Metric | Value | Description |\n")
+        f.write(f"| :--- | :--- | :--- |\n")
+        f.write(f"| **Average Distance** | **{stats['avg_distance']} cm** | Mean of all valid detections. |\n")
+        f.write(f"| **Standard Deviation ($\\sigma$)** | **{std_dev} cm** | Consistency of the detection. |\n")
+        f.write(f"| **Minimum Distance** | {stats['min_distance']} cm | Closest measured point. |\n")
+        f.write(f"| **Maximum Distance** | {stats['max_distance']} cm | Furthest measured point. |\n")
+        f.write(f"| **Distance Spread** | {stats['spread']} cm | Range between min and max. |\n")
+        f.write(f"| **Detection Rate** | {stats['detection_rate']}% | Percentage of frames with marker. |\n\n")
+        
+        if distances:
+            f.write(f"## 3. Visual Evidence\n")
+            f.write(f"### Distance Tracking Chart\n")
+            f.write(f"![Distance Chart]({chart_filename})\n\n")
+        
+        if local_screenshots:
+            f.write(f"### Captured Screenshots\n")
+            for ss_rel_path in local_screenshots:
+                f.write(f"![Screenshot]({ss_rel_path})\n\n")
+
+        f.write(f"## 4. Conclusion\n")
+        if stats['detection_rate'] > 80:
+            conclusion = "The session shows high detection stability and consistent distance reporting."
+        elif stats['detection_rate'] > 50:
+            conclusion = "The session shows moderate detection reliability. Consider adjusting lighting or focus."
+        else:
+            conclusion = "Low detection rate observed. Accuracy may be compromised."
+        
+        f.write(f"{conclusion}\n")
+
+    print(f"✅ Enhanced Markdown report generated: {md_path}")
 
 
 # ══════════════════════════════════════════════════════════════════════════
