@@ -132,15 +132,17 @@ def run_live_camera(detector, camera_index=0, lock_focus=False, focus_value=0):
         stats_total += 1
         if results:
             stats_detected += 1
-            # Gunakan marker pertama yang terdeteksi
-            d_val = results[0]["distance_cm"]
-            stats_d_sum += d_val
-            stats_d_min = min(stats_d_min, d_val)
-            stats_d_max = max(stats_d_max, d_val)
-            
-            # Record history
-            distance_history.append(d_val)
-            frame_indices.append(stats_total)
+            # Gunakan median dari semua marker (filtered by reproj error)
+            best = detector.get_best_distance(results)
+            if best:
+                d_val = best["distance_cm"]
+                stats_d_sum += d_val
+                stats_d_min = min(stats_d_min, d_val)
+                stats_d_max = max(stats_d_max, d_val)
+                
+                # Record history
+                distance_history.append(d_val)
+                frame_indices.append(stats_total)
 
         # Annotate
         annotated = detector.annotate_frame(frame, results)

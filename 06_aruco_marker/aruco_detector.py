@@ -274,3 +274,49 @@ class ArucoDetector:
 
         errors = np.sqrt(np.sum((corners_2d - projected) ** 2, axis=1))
         return float(np.mean(errors))
+
+    def get_best_distance(self, results, max_reproj_error=0.5):
+        """
+        Hitung jarak terbaik dari semua marker terdeteksi menggunakan MEDIAN
+        setelah memfilter marker dengan reprojection error tinggi.
+
+        Args:
+            results: output dari detect()
+            max_reproj_error: threshold reprojection error (piksel).
+                              Marker dengan error > threshold akan ditolak.
+
+        Returns:
+            dict: {
+                'distance_cm': float (median distance),
+                'used_count': int (jumlah marker dipakai),
+                'rejected_count': int (jumlah marker ditolak),
+                'all_distances': list (semua jarak yang dipakai),
+            }
+            atau None jika tidak ada marker valid.
+        """
+        if not results:
+            return None
+
+        # Filter by reprojection error
+        valid = [r for r in results if r["reprojection_error"] <= max_reproj_error]
+        rejected_count = len(results) - len(valid)
+
+        # Fallback: jika semua ditolak, pakai yang error-nya paling kecil
+        if not valid:
+            best = min(results, key=lambda r: r["reprojection_error"])
+            return {
+                "distance_cm": best["distance_cm"],
+                "used_count": 1,
+                "rejected_count": len(results) - 1,
+                "all_distances": [best["distance_cm"]],
+            }
+
+        distances = [r["distance_cm"] for r in valid]
+        median_dist = round(float(np.median(distances)), 2)
+
+        return {
+            "distance_cm": median_dist,
+            "used_count": len(valid),
+            "rejected_count": rejected_count,
+            "all_distances": distances,
+        }
