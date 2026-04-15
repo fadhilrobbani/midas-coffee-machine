@@ -240,25 +240,36 @@ def _generate_markdown_report(stats, distances, frames, screenshots):
     chart_path = os.path.join(report_dir, chart_filename)
     
     if distances:
-        plt.figure(figsize=(10, 6))
-        plt.plot(frames, distances, label='Distance (cm)', color='#1f77b4', linewidth=1.5)
-        plt.axhline(y=stats['avg_distance'], color='r', linestyle='--', label=f"Avg: {stats['avg_distance']}cm")
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
         
-        plt.title(f"ArUco Distance Tracking Session\n({timestamp_folder})")
-        plt.xlabel("Frame Number")
-        plt.ylabel("Distance (cm)")
-        plt.grid(True, linestyle=':', alpha=0.7)
-        plt.legend()
+        # Line plot
+        ax1.plot(frames, distances, label='Distance (cm)', color='#1f77b4', linewidth=1.5)
+        ax1.axhline(y=stats['avg_distance'], color='r', linestyle='--', label=f"Avg: {stats['avg_distance']}cm")
+        ax1.set_title(f"ArUco Distance Tracking Session\n({timestamp_folder})")
+        ax1.set_ylabel("Distance (cm)")
+        ax1.grid(True, linestyle=':', alpha=0.7)
+        ax1.legend()
+        
+        # Scatter plot
+        ax2.scatter(frames, distances, s=10, alpha=0.6, color='#2ca02c', label='Distance per frame')
+        ax2.axhline(y=stats['avg_distance'], color='r', linestyle='--', label=f"Avg: {stats['avg_distance']}cm")
+        ax2.set_title("Scatter Plot: Distance per Detected Frame")
+        ax2.set_xlabel("Frame Number")
+        ax2.set_ylabel("Distance (cm)")
+        ax2.grid(True, linestyle=':', alpha=0.7)
+        ax2.legend()
         
         # Adjust Y-axis to see variations better
         if stats['spread'] > 0:
             margin = max(1.0, stats['spread'] * 0.5)
-            plt.ylim(stats['min_distance'] - margin, stats['max_distance'] + margin)
+            ax1.set_ylim(stats['min_distance'] - margin, stats['max_distance'] + margin)
+            ax2.set_ylim(stats['min_distance'] - margin, stats['max_distance'] + margin)
             
         plt.tight_layout()
         plt.savefig(chart_path)
         plt.close()
         print(f"✅ Chart saved: {chart_filename}")
+
 
     # 3. Copy screenshots to report folder for local linking
     local_screenshots = []
