@@ -144,7 +144,7 @@ def run_live_camera(detector, camera_index=0, lock_focus=False, focus_value=0):
                 distance_history.append(d_val)
                 frame_indices.append(stats_total)
 
-        # Annotate
+        # Annotate markers
         annotated = detector.annotate_frame(frame, results)
 
         # FPS counter
@@ -155,19 +155,68 @@ def run_live_camera(detector, camera_index=0, lock_focus=False, focus_value=0):
             fps_counter = 0
             fps_time = time.time()
 
+        # ── UI Overlay ──────────────────────────────────────────────────
         h, w = annotated.shape[:2]
-        fps_txt = f"FPS: {fps_display:.1f} | Process: {t_process*1000:.0f}ms"
-        cv2.putText(annotated, fps_txt, (10, h - 15),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 255, 150), 1)
 
-        # Jumlah marker terdeteksi
+        # Get best distance for this frame
+        best = detector.get_best_distance(results) if results else None
+        current_dist = best["distance_cm"] if best else None
+
+        # Update running average for display
+        session_avg = round(stats_d_sum / stats_detected, 2) if stats_detected > 0 else 0.0
+
+        # ── Top-left info panel (semi-transparent) ───────────────────────
+        panel_w, panel_h = 220, 130
+        overlay = annotated.copy()
+        cv2.rectangle(overlay, (8, 8), (8 + panel_w, 8 + panel_h), (20, 20, 20), -1)
+        cv2.addWeighted(overlay, 0.55, annotated, 0.45, 0, annotated)
+
+        # Garis border panel
+        cv2.rectangle(annotated, (8, 8), (8 + panel_w, 8 + panel_h), (80, 80, 80), 1)
+
+        # ── Live Distance (large) ─────────────────────────────────────────
+        if current_dist is not None:
+            # Warna berdasarkan keyakinan: hijau jika banyak marker, kuning jika sedikit
+            n_valid = best["used_count"] if best else 0
+            if n_valid >= 4:
+                dist_color = (0, 255, 128)   # Hijau terang
+            elif n_valid >= 2:
+                dist_color = (0, 220, 255)   # Kuning-cyan
+            else:
+                dist_color = (0, 150, 255)   # Oranye (hati-hati)
+
+            cv2.putText(annotated, "DISTANCE",
+                        (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (160, 160, 160), 1)
+            cv2.putText(annotated, f"{current_dist:.2f} cm",
+                        (18, 62), cv2.FONT_HERSHEY_DUPLEX, 0.95, dist_color, 2)
+        else:
+            cv2.putText(annotated, "DISTANCE",
+                        (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (100, 100, 100), 1)
+            cv2.putText(annotated, "-- cm",
+                        (18, 62), cv2.FONT_HERSHEY_DUPLEX, 0.95, (80, 80, 80), 2)
+
+        # Divider
+        cv2.line(annotated, (14, 72), (220, 72), (70, 70, 70), 1)
+
+        # ── Stats row ─────────────────────────────────────────────────────
         n_markers = len(results)
-        marker_txt = f"Markers: {n_markers}"
-        color = (0, 255, 0) if n_markers > 0 else (0, 0, 255)
-        cv2.putText(annotated, marker_txt, (10, 25),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        markers_color = (0, 255, 0) if n_markers > 0 else (80, 80, 255)
+        
+        cv2.putText(annotated, f"Markers : {n_markers}",
+                    (18, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
+        cv2.putText(annotated, f"Avg     : {session_avg:.2f} cm",
+                    (18, 108), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
+        cv2.putText(annotated, f"Frames  : {stats_total}",
+                    (18, 126), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1)
 
-        cv2.imshow("ArUco Marker Detector - Live", annotated)
+        # ── Bottom status bar ─────────────────────────────────────────────
+        bar_y = h - 28
+        cv2.rectangle(annotated, (0, bar_y), (w, h), (15, 15, 15), -1)
+        fps_txt = f"FPS: {fps_display:.1f}   |   Process: {t_process*1000:.0f} ms   |   [S] Screenshot   [Q] Quit"
+        cv2.putText(annotated, fps_txt, (10, h - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (140, 200, 140), 1)
+
+        cv2.imshow("ArUco Distance Detector", annotated)
 
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
@@ -288,9 +337,14 @@ def _generate_markdown_report(stats, distances, frames, screenshots):
     # 4. Write Markdown file
     md_path = os.path.join(report_dir, "report.md")
     
-    # Calculate Std Dev for the session
+    # Calculate Std Dev and precision metrics
     import numpy as np
-    std_dev = round(float(np.std(distances)), 2) if distances else 0.0
+    arr = np.array(distances) if distances else np.array([0.0])
+    std_dev = round(float(np.std(arr)), 2) if distances else 0.0
+    median_dist = round(float(np.median(arr)), 2) if distances else 0.0
+    p5  = round(float(np.percentile(arr, 5)),  2) if distances else 0.0
+    p95 = round(float(np.percentile(arr, 95)), 2) if distances else 0.0
+    precision_error = round(p95 - p5, 2)
     
     with open(md_path, "w") as f:
         f.write(f"# ArUco Depth Verification: Session Report\n")
@@ -310,7 +364,9 @@ def _generate_markdown_report(stats, distances, frames, screenshots):
         f.write(f"| Metric | Value | Description |\n")
         f.write(f"| :--- | :--- | :--- |\n")
         f.write(f"| **Average Distance** | **{stats['avg_distance']} cm** | Mean of all valid detections. |\n")
-        f.write(f"| **Standard Deviation ($\\sigma$)** | **{std_dev} cm** | Consistency of the detection. |\n")
+        f.write(f"| **Median Distance (P50)** | **{median_dist} cm** | Most representative single value. |\n")
+        f.write(f"| **Standard Deviation ($\\sigma$)** | {std_dev} cm | Consistency of the detection. |\n")
+        f.write(f"| **Precision Error (P95−P5)** | **{precision_error} cm** | 90% of readings fall within this range. |\n")
         f.write(f"| **Minimum Distance** | {stats['min_distance']} cm | Closest measured point. |\n")
         f.write(f"| **Maximum Distance** | {stats['max_distance']} cm | Furthest measured point. |\n")
         f.write(f"| **Distance Spread** | {stats['spread']} cm | Range between min and max. |\n")
@@ -337,6 +393,73 @@ def _generate_markdown_report(stats, distances, frames, screenshots):
         f.write(f"{conclusion}\n")
 
     print(f"✅ Enhanced Markdown report generated: {md_path}")
+
+    # 5. Write JSON report
+    _generate_json_report(report_dir, timestamp_folder, stats, distances, frames, local_screenshots, std_dev)
+
+
+def _generate_json_report(report_dir, timestamp_folder, stats, distances, frames, local_screenshots, std_dev):
+    """Simpan data sesi dalam format JSON terstruktur (compact)."""
+    import json
+    import numpy as np
+
+    MAX_SAMPLES = 50  # Maksimum titik yang disimpan untuk grafik
+
+    # Downsampling: ambil N titik merata dari seluruh data
+    if distances:
+        n = len(distances)
+        if n <= MAX_SAMPLES:
+            samples = [round(v, 2) for v in distances]
+            stride = 1
+        else:
+            stride = n // MAX_SAMPLES
+            indices = list(range(0, n, stride))[:MAX_SAMPLES]
+            samples = [round(distances[i], 2) for i in indices]
+
+        # Percentiles untuk analisis distribusi
+        arr = np.array(distances)
+        percentiles = {
+            "p5":  round(float(np.percentile(arr, 5)),  2),
+            "p25": round(float(np.percentile(arr, 25)), 2),
+            "p50": round(float(np.percentile(arr, 50)), 2),
+            "p75": round(float(np.percentile(arr, 75)), 2),
+            "p95": round(float(np.percentile(arr, 95)), 2),
+        }
+    else:
+        samples, stride = [], 1
+        percentiles = {"p5": 0, "p25": 0, "p50": 0, "p75": 0, "p95": 0}
+
+    json_data = {
+        "session_timestamp": timestamp_folder,
+        "parameters": {
+            "dictionary": stats.get("dictionary", "N/A"),
+            "marker_size_cm": stats.get("marker_size_cm", "N/A"),
+            "focal_length_px": stats.get("focal_length", "N/A"),
+            "lock_focus": stats.get("lock_focus", False),
+        },
+        "summary": {
+            "total_frames": stats["total_frames"],
+            "detected_frames": stats["detected_frames"],
+            "detection_rate_pct": stats["detection_rate"],
+            "avg_distance_cm": stats["avg_distance"],
+            "std_dev_cm": std_dev,
+            "min_distance_cm": stats["min_distance"],
+            "max_distance_cm": stats["max_distance"],
+            "spread_cm": stats["spread"],
+            "percentiles": percentiles,
+        },
+        "distance_samples": samples,
+        "sample_stride": stride,
+        "screenshots": local_screenshots,
+    }
+
+    json_path = os.path.join(report_dir, "session_data.json")
+    with open(json_path, "w") as f:
+        json.dump(json_data, f, indent=2, ensure_ascii=False)
+
+    size_kb = os.path.getsize(json_path) / 1024
+    print(f"✅ JSON report generated: {json_path} ({size_kb:.1f} KB)")
+
 
 
 # ══════════════════════════════════════════════════════════════════════════
