@@ -1,35 +1,36 @@
 # ArUco Detection — Summary of All Sessions
 
-Auto-generated on: 2026-04-15 15:32:27  
-Total sessions: **18**
+Auto-generated on: 2026-04-15 15:57:31  
+Total sessions: **19**
 
 ---
 
 ## Overall Summary
 
-| # | Session | Median Dist | Precision | Std Dev | Detect Rate | Frames | SS | Source |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 1 | 2026-04-15_09-40-45 | N/A | N/A | N/A | N/A% | N/A | 0 | 🟡 MD |
-| 2 | 2026-04-15_09-56-07 | N/A | N/A | 0.5 | 100.0% | 157 | 0 | 🟡 MD |
-| 3 | 2026-04-15_10-10-27 | N/A | N/A | 0.51 | 100.0% | 267 | 1 | 🟡 MD |
-| 4 | 2026-04-15_10-18-30 | N/A | N/A | 0.75 | 99.8% | 546 | 0 | 🟡 MD |
-| 5 | 2026-04-15_10-18-48 | N/A | N/A | 0.1 | 100.0% | 198 | 1 | 🟡 MD |
-| 6 | 2026-04-15_10-21-16 | N/A | N/A | 1.54 | 87.2% | 1660 | 1 | 🟡 MD |
-| 7 | 2026-04-15_10-23-59 | N/A | N/A | 0.27 | 100.0% | 136 | 1 | 🟡 MD |
-| 8 | 2026-04-15_10-37-47 | N/A | N/A | 0.04 | 100.0% | 51 | 0 | 🟡 MD |
-| 9 | 2026-04-15_10-39-18 | N/A | N/A | 0.38 | 100.0% | 514 | 1 | 🟡 MD |
-| 10 | 2026-04-15_10-46-52 | N/A | N/A | 0.14 | 100.0% | 133 | 0 | 🟡 MD |
-| 11 | 2026-04-15_10-50-23 | N/A | N/A | 0.19 | 100.0% | 315 | 1 | 🟡 MD |
-| 12 | 2026-04-15_10-59-58 | N/A | N/A | 0.08 | 90.4% | 218 | 1 | 🟡 MD |
-| 13 | 2026-04-15_11-42-39 | N/A | N/A | 0.31 | 100.0% | 1817 | 0 | 🟡 MD |
-| 14 | 2026-04-15_13-28-43 | N/A | N/A | 0.06 | 100.0% | 399 | 1 | 🟡 MD |
-| 15 | 2026-04-15_13-34-11 | N/A | N/A | 0.06 | 100.0% | 270 | 0 | 🟡 MD |
-| 16 | 2026-04-15_13-36-59 | N/A | N/A | 0.24 | 93.9% | 692 | 0 | 🟡 MD |
-| 17 | 2026-04-15_14-57-43 | N/A | N/A | 0.21 | 98.0% | 807 | 1 | 🟢 JSON |
-| 18 | 2026-04-15_15-09-48 | 20.48 | 0.4 | 0.11 | 100.0% | 210 | 1 | 🟢 JSON |
+| # | Session | Median Dist | Precision | Abs Error | Std Dev | Detect Rate | Frames | SS | Source |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | 2026-04-15_09-40-45 | N/A | N/A | N/A | N/A | N/A% | N/A | 0 | 🟡 MD |
+| 2 | 2026-04-15_09-56-07 | N/A | N/A | N/A | 0.5 | 100.0% | 157 | 0 | 🟡 MD |
+| 3 | 2026-04-15_10-10-27 | N/A | N/A | N/A | 0.51 | 100.0% | 267 | 1 | 🟡 MD |
+| 4 | 2026-04-15_10-18-30 | N/A | N/A | N/A | 0.75 | 99.8% | 546 | 0 | 🟡 MD |
+| 5 | 2026-04-15_10-18-48 | N/A | N/A | N/A | 0.1 | 100.0% | 198 | 1 | 🟡 MD |
+| 6 | 2026-04-15_10-21-16 | N/A | N/A | N/A | 1.54 | 87.2% | 1660 | 1 | 🟡 MD |
+| 7 | 2026-04-15_10-23-59 | N/A | N/A | N/A | 0.27 | 100.0% | 136 | 1 | 🟡 MD |
+| 8 | 2026-04-15_10-37-47 | N/A | N/A | N/A | 0.04 | 100.0% | 51 | 0 | 🟡 MD |
+| 9 | 2026-04-15_10-39-18 | N/A | N/A | N/A | 0.38 | 100.0% | 514 | 1 | 🟡 MD |
+| 10 | 2026-04-15_10-46-52 | N/A | N/A | N/A | 0.14 | 100.0% | 133 | 0 | 🟡 MD |
+| 11 | 2026-04-15_10-50-23 | N/A | N/A | N/A | 0.19 | 100.0% | 315 | 1 | 🟡 MD |
+| 12 | 2026-04-15_10-59-58 | N/A | N/A | N/A | 0.08 | 90.4% | 218 | 1 | 🟡 MD |
+| 13 | 2026-04-15_11-42-39 | N/A | N/A | N/A | 0.31 | 100.0% | 1817 | 0 | 🟡 MD |
+| 14 | 2026-04-15_13-28-43 | N/A | N/A | N/A | 0.06 | 100.0% | 399 | 1 | 🟡 MD |
+| 15 | 2026-04-15_13-34-11 | N/A | N/A | N/A | 0.06 | 100.0% | 270 | 0 | 🟡 MD |
+| 16 | 2026-04-15_13-36-59 | N/A | N/A | N/A | 0.24 | 93.9% | 692 | 0 | 🟡 MD |
+| 17 | 2026-04-15_14-57-43 | N/A | N/A | N/A | 0.21 | 98.0% | 807 | 1 | 🟢 JSON |
+| 18 | 2026-04-15_15-09-48 | 20.48 | 0.4 | N/A | 0.11 | 100.0% | 210 | 1 | 🟢 JSON |
+| 19 | 2026-04-15_15-35-35 | 20.34 | 0.43 | N/A | 0.15 | 100.0% | 289 | 1 | 🟢 JSON |
 
-**Overall Average Distance:** 24.18 cm  
-**Average Std Dev:** 0.32 cm
+**Overall Average Distance:** 23.98 cm  
+**Average Std Dev:** 0.31 cm
 
 ---
 
@@ -516,6 +517,33 @@ Total sessions: **18**
 | **Total Frames** | 210 | Duration proxy. |
 
 ![Distance Chart](2026-04-15_15-09-48/distance_chart.png)
+
+> The session shows high detection stability and consistent distance reporting.
+
+---
+
+### Session 19: 2026-04-15_15-35-35
+
+| Parameter | Value |
+| :--- | :--- |
+| **Dictionary** | DICT_4X4_50 |
+| **Marker Size** | 1.5 cm |
+| **Focal Length** | 660.8 px |
+| **Lock Focus** | OFF |
+
+| Metric | Value | Description |
+| :--- | :--- | :--- |
+| **Median Distance (P50)** | **20.34 cm** | Most representative single value. |
+| **Avg Distance** | 20.38 cm | Mean of all detections. |
+| **Precision Error (P95-P5)** | **0.43 cm** | 90% of readings fall within this range. |
+| **Std Dev** | 0.15 cm | Consistency of distance. |
+| **Min** | 20.06 cm | Closest reading. |
+| **Max** | 20.84 cm | Furthest reading. |
+| **Spread** | 0.78 cm | Range (max - min). |
+| **Detection Rate** | 100.0% | Frames with marker detected. |
+| **Total Frames** | 289 | Duration proxy. |
+
+![Distance Chart](2026-04-15_15-35-35/distance_chart.png)
 
 > The session shows high detection stability and consistent distance reporting.
 

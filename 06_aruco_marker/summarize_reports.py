@@ -53,6 +53,7 @@ def parse_from_json(json_path):
         "chart_relpath": None,
         "conclusion":   None,
         "distance_history": data.get("distance_samples", []),
+        "ground_truth": str(s.get("ground_truth_cm", "N/A")) if s.get("ground_truth_cm") is not None else "N/A",
     }
 
 
@@ -89,6 +90,8 @@ def parse_from_markdown(md_path):
         "n_screenshots": len(re.findall(r"!\[Screenshot\]", content)),
         "distance_history": [],
         "chart_relpath": None,
+        "abs_error_pct": find(r"\*\*Absolute Error\*\*\s*\|\s*\*\*([\d.]+)%\*\*"),
+        "ground_truth": find(r"Variance from true distance \(([\d.]+) cm,"),
     }
 
 
@@ -166,11 +169,23 @@ def main():
 
         # Overall summary
         f.write("## Overall Summary\n\n")
-        f.write("| # | Session | Median Dist | Precision | Std Dev | Detect Rate | Frames | SS | Source |\n")
-        f.write("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n")
+        f.write("| # | Session | Median Dist | Precision | Abs Error | Std Dev | Detect Rate | Frames | SS | Source |\n")
+        f.write("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n")
         for i, e in enumerate(entries, 1):
             src_badge = "🟢 JSON" if e["source"] == "json" else "🟡 MD"
-            f.write(f"| {i} | {e['timestamp']} | {e.get('median_dist','N/A')} | {e.get('precision_error','N/A')} | {e['std_dev']} | "
+            
+            # Hitung absolut error dari JSON jika tersedia, atau parse dari MD
+            abs_err = e.get("abs_error_pct", "N/A")
+            if e["source"] == "json" and e.get("ground_truth", "N/A") != "N/A" and e.get("median_dist", "N/A") != "N/A":
+                try:
+                    gt = float(e["ground_truth"])
+                    med = float(e["median_dist"])
+                    abs_err = f"{(abs(med - gt) / gt * 100):.2f}%"
+                except:
+                    pass
+            e["abs_error_pct"] = abs_err if abs_err != "N/A" else "N/A"
+
+            f.write(f"| {i} | {e['timestamp']} | {e.get('median_dist','N/A')} | {e.get('precision_error','N/A')} | {e['abs_error_pct']} | {e['std_dev']} | "
                     f"{e['detect_rate']}% | {e['total_frames']} | "
                     f"{e['n_screenshots']} | {src_badge} |\n")
 
@@ -192,6 +207,8 @@ def main():
             f.write(f"| **Median Distance (P50)** | **{e.get('median_dist', 'N/A')} cm** | Most representative single value. |\n")
             f.write(f"| **Avg Distance** | {e['avg_distance']} cm | Mean of all detections. |\n")
             f.write(f"| **Precision Error (P95-P5)** | **{e.get('precision_error', 'N/A')} cm** | 90% of readings fall within this range. |\n")
+            if e.get("abs_error_pct", "N/A") != "N/A":
+                f.write(f"| **Absolute Error** | **{e['abs_error_pct']}** | Error vs ground truth ({e.get('ground_truth', 'N/A')} cm). |\n")
             f.write(f"| **Std Dev** | {e['std_dev']} cm | Consistency of distance. |\n")
             f.write(f"| **Min** | {e['min_distance']} cm | Closest reading. |\n")
             f.write(f"| **Max** | {e['max_distance']} cm | Furthest reading. |\n")

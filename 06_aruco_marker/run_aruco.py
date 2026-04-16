@@ -114,6 +114,12 @@ def run_live_camera(detector, camera_index=0, lock_focus=False, focus_value=0):
     distance_history = []
     frame_indices = []
     screenshot_paths = []
+    
+    # Video Recording State
+    VIDEO_DIR = os.path.join(_SCRIPT_DIR, "results", "video")
+    os.makedirs(VIDEO_DIR, exist_ok=True)
+    is_recording = False
+    video_writer = None
 
     while True:
         ret, frame = cap.read()
@@ -212,15 +218,29 @@ def run_live_camera(detector, camera_index=0, lock_focus=False, focus_value=0):
         # ── Bottom status bar ─────────────────────────────────────────────
         bar_y = h - 28
         cv2.rectangle(annotated, (0, bar_y), (w, h), (15, 15, 15), -1)
-        fps_txt = f"FPS: {fps_display:.1f}   |   Process: {t_process*1000:.0f} ms   |   [S] Screenshot   [Q] Quit"
+        fps_txt = f"FPS: {fps_display:.1f}   |   Process: {t_process*1000:.0f} ms   |   [S] Screenshot   [R] Record   [Q] Quit"
         cv2.putText(annotated, fps_txt, (10, h - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.42, (140, 200, 140), 1)
+
+        # ── Recording Indicator ───────────────────────────────────────────
+        if is_recording:
+            # Efek blinking: Tampil 0.5s, sembunyi 0.5s
+            if int(time.time() * 2) % 2 == 0:
+                cv2.circle(annotated, (w - 65, 25), 6, (0, 0, 255), -1)
+                cv2.putText(annotated, "REC", (w - 50, 30), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+            
+            if video_writer is not None:
+                video_writer.write(annotated)
 
         cv2.imshow("ArUco Distance Detector", annotated)
 
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             print("Live camera dihentikan.")
+            if is_recording and video_writer is not None:
+                video_writer.release()
+                print("Recording stopped automatically.")
             break
         elif key == ord('s'):
             timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
@@ -230,9 +250,41 @@ def run_live_camera(detector, camera_index=0, lock_focus=False, focus_value=0):
             screenshot_paths.append(ss_path)
             _print_result(results, source="screenshot")
             print(f"Screenshot saved: {ss_path}")
+        elif key == ord('r'):
+            if not is_recording:
+                # Start recording
+                timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+                vid_filename = f"aruco_record_{timestamp}.mp4"
+                vid_path = os.path.join(VIDEO_DIR, vid_filename)
+                
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                fps_cap = cap.get(cv2.CAP_PROP_FPS)
+                if fps_cap <= 0: 
+                    fps_cap = 30.0
+                video_writer = cv2.VideoWriter(vid_path, fourcc, fps_cap, (w, h))
+                is_recording = True
+                print(f"🔴 Memulai rekaman video: {vid_path}")
+            else:
+                # Stop recording
+                is_recording = False
+                if video_writer is not None:
+                    video_writer.release()
+                    video_writer = None
+                    print("⏹ Berhenti merekam.")
 
+    if is_recording and video_writer is not None:
+        video_writer.release()
     cap.release()
     cv2.destroyAllWindows()
+
+    print("\n" + "="*50)
+    gt_input = input("Enter ground truth distance in cm [Press Enter to skip]: ").strip()
+    ground_truth = None
+    if gt_input:
+        try:
+            ground_truth = float(gt_input.replace(',', '.'))
+        except ValueError:
+            print("⚠ Invalid input, ignoring ground truth.")
 
     # Calculate final stats
     avg_d = stats_d_sum / stats_detected if stats_detected > 0 else 0.0
@@ -249,7 +301,8 @@ def run_live_camera(detector, camera_index=0, lock_focus=False, focus_value=0):
         "dictionary": detector.dictionary_name,
         "marker_size_cm": detector.marker_size_cm,
         "focal_length": round(detector.camera_matrix[0, 0], 1),
-        "lock_focus": lock_focus
+        "lock_focus": lock_focus,
+        "ground_truth": ground_truth
     }
 
     # Print to terminal
@@ -365,8 +418,15 @@ def _generate_markdown_report(stats, distances, frames, screenshots):
         f.write(f"| :--- | :--- | :--- |\n")
         f.write(f"| **Average Distance** | **{stats['avg_distance']} cm** | Mean of all valid detections. |\n")
         f.write(f"| **Median Distance (P50)** | **{median_dist} cm** | Most representative single value. |\n")
-        f.write(f"| **Standard Deviation ($\\sigma$)** | {std_dev} cm | Consistency of the detection. |\n")
         f.write(f"| **Precision Error (P95−P5)** | **{precision_error} cm** | 90% of readings fall within this range. |\n")
+        
+        gt = stats.get('ground_truth')
+        if gt is not None and gt > 0:
+            error_val = abs(median_dist - gt)
+            error_pct = (error_val / gt) * 100
+            f.write(f"| **Absolute Error** | **{error_pct:.2f}%** | Variance from true distance ({gt} cm, err: {error_val:.2f} cm). |\n")
+            
+        f.write(f"| **Standard Deviation ($\\sigma$)** | {std_dev} cm | Consistency of the detection. |\n")
         f.write(f"| **Minimum Distance** | {stats['min_distance']} cm | Closest measured point. |\n")
         f.write(f"| **Maximum Distance** | {stats['max_distance']} cm | Furthest measured point. |\n")
         f.write(f"| **Distance Spread** | {stats['spread']} cm | Range between min and max. |\n")
@@ -441,6 +501,7 @@ def _generate_json_report(report_dir, timestamp_folder, stats, distances, frames
             "total_frames": stats["total_frames"],
             "detected_frames": stats["detected_frames"],
             "detection_rate_pct": stats["detection_rate"],
+            "ground_truth_cm": stats.get("ground_truth"),
             "avg_distance_cm": stats["avg_distance"],
             "std_dev_cm": std_dev,
             "min_distance_cm": stats["min_distance"],
