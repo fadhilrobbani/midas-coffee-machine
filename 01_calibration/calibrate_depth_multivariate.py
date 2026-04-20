@@ -93,6 +93,8 @@ class MultiVariateCalibrationWindow(Gtk.Window):
         self.entry_roi = Gtk.Entry(text="10,400,100,470"); vb_p.pack_start(Gtk.Label(label="Tray ROI:"),0,0,0); vb_p.pack_start(self.entry_roi,0,0,0)
         self.entry_tray_z = Gtk.Entry(text="35.0"); vb_p.pack_start(Gtk.Label(label="True Z Tray (cm):"),0,0,0); vb_p.pack_start(self.entry_tray_z,0,0,0)
         self.entry_rim_z = Gtk.Entry(text="15.0"); vb_p.pack_start(Gtk.Label(label="True Z Rim (cm):"),0,0,0); vb_p.pack_start(self.entry_rim_z,0,0,0)
+        self.entry_rim_diam = Gtk.Entry(text="7.2"); vb_p.pack_start(Gtk.Label(label="True Inner Diam (cm):"),0,0,0); vb_p.pack_start(self.entry_rim_diam,0,0,0)
+        self.entry_outer_diam = Gtk.Entry(text=""); vb_p.pack_start(Gtk.Label(label="True Outer Diam (cm) [Opt]:"),0,0,0); vb_p.pack_start(self.entry_outer_diam,0,0,0)
         btn_cap = Gtk.Button(label="Capture Data Point"); btn_cap.connect("clicked", self.on_capture); vb_p.pack_start(btn_cap,0,0,0)
         self.lbl_pts = Gtk.Label(label="Points: 0"); vb_p.pack_start(self.lbl_pts,0,0,0)
         btn_fit = Gtk.Button(label="Calculate Multivariate Weights"); btn_fit.connect("clicked", self.on_fit); vb_p.pack_start(btn_fit,0,0,0)
@@ -211,6 +213,11 @@ class MultiVariateCalibrationWindow(Gtk.Window):
         try:
             tz_tray = float(self.entry_tray_z.get_text())
             tz_rim = float(self.entry_rim_z.get_text())
+            t_diam = float(self.entry_rim_diam.get_text())
+            try:
+                t_outer = float(self.entry_outer_diam.get_text())
+            except ValueError:
+                t_outer = 0.0
             roi = tuple(map(int, self.entry_roi.get_text().split(',')))
         except: return
         
@@ -219,7 +226,7 @@ class MultiVariateCalibrationWindow(Gtk.Window):
         mt = self.depth_estimator.get_tray_depth(self.latest_depth, roi)
         
         if mt > 0:
-            point = {'M_rim': mr, 'M_tray': mt, 'Z_tray': tz_tray, 'Z_rim': tz_rim, 'timestamp': time.time()}
+            point = {'M_rim': mr, 'M_tray': mt, 'Z_tray': tz_tray, 'Z_rim': tz_rim, 'Diam_rim': t_diam, 'Diam_outer': t_outer, 'timestamp': time.time()}
             self.poly_data_points.append(point)
             
             # 1. Save point to JSON
@@ -227,7 +234,8 @@ class MultiVariateCalibrationWindow(Gtk.Window):
                 json.dump(self.poly_data_points, f, indent=4)
                 
             # 2. Save image snapshot
-            img_path = os.path.join(self.snapshots_dir, f"calib_tray{tz_tray}cm_rim{tz_rim}cm_{int(time.time())}.jpg")
+            outer_str = f"_outer{t_outer}cm" if t_outer > 0 else ""
+            img_path = os.path.join(self.snapshots_dir, f"calib_tray{tz_tray}cm_rim{tz_rim}cm_diam{t_diam}cm{outer_str}_{int(time.time())}.jpg")
             cv2.imwrite(img_path, self.latest_frame)
             
             self.lbl_pts.set_text(f"Points: {len(self.poly_data_points)}")
