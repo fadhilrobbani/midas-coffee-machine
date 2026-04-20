@@ -83,11 +83,12 @@ def generate_report():
         # Run Inference
         depth_map = depth_estimator.process(frame)
         boxes = detector.detect(frame)
-        depth_norm = cv2.normalize(depth_map, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        m_tray = depth_estimator.get_tray_depth(depth_norm, tray_roi)
+        
+        # Standardization is now handled internally by get_tray_depth and get_rim_depth
+        m_tray = depth_estimator.get_tray_depth(depth_map, tray_roi)
         
         if boxes and m_tray > 0:
-            m_rim = depth_estimator.get_rim_depth(depth_norm, boxes[0]['bbox'])
+            m_rim = depth_estimator.get_rim_depth(depth_map, boxes[0]['bbox'])
             pred_z = calculate_z_rim_multivariate(m_rim, m_tray, true_z_tray, c1, c2, c3, c4)
             
             # Predict cup height based on the true floor distance
@@ -103,7 +104,9 @@ def generate_report():
             cv2.putText(debug_frame, f"Z_rim: {pred_z:.1f}cm (Err:{error_percent:.1f}%)", (bpx[0], bpx[1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,255), 2)
             
             # Create Heatmap
-            heatmap = cv2.applyColorMap(depth_norm, cv2.COLORMAP_INFERNO)
+            depth_std = depth_estimator.get_standardized_depth(depth_map)
+            depth_norm_vis = (depth_std / 1000.0 * 255.0).astype(np.uint8)
+            heatmap = cv2.applyColorMap(depth_norm_vis, cv2.COLORMAP_INFERNO)
             cv2.rectangle(heatmap, (bpx[0], bpx[1]), (bpx[2], bpx[3]), (0,255,0), 2)
             cv2.rectangle(heatmap, (tray_roi[0], tray_roi[1]), (tray_roi[2], tray_roi[3]), (255,0,0), 2)
             

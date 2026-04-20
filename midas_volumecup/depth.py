@@ -57,8 +57,25 @@ class MidasDepthEstimator:
             
         return prediction.astype(np.float32)
 
+    def get_standardized_depth(self, depth_map):
+        """ 
+        Converts raw depth (disparity) to a standardized 0-1000 scale.
+        Uses a fixed saturation point to ensure values are comparable across frames.
+        """
+        # We use a fixed scale factor. Higher = further distance.
+        # MiDaS small typically produces values in the range 0-3000+
+        # Using 2500 as a 'saturation' point for 1000 scale.
+        SATURATION_POINT = 2500.0 
+        scale = 1000.0 / SATURATION_POINT
+        standardized = np.clip(depth_map * scale, 0, 1000).astype(np.float32)
+        return standardized
+
     def get_tray_depth(self, depth_map, roi_coords):
         """ Average/Median depth in the tray region """
+        # Ensure we are using standardized values if depth_map is raw disparity
+        if depth_map.max() > 1000:
+             depth_map = self.get_standardized_depth(depth_map)
+             
         x1, y1, x2, y2 = roi_coords
         roi = depth_map[y1:y2, x1:x2]
         if roi.size == 0:
@@ -67,18 +84,22 @@ class MidasDepthEstimator:
         
     def get_rim_depth(self, depth_map, bbox):
         """ Median depth within a horizontal strip along the physical lip of the cup """
+        # Ensure we are using standardized values if depth_map is raw disparity
+        if depth_map.max() > 1000:
+             depth_map = self.get_standardized_depth(depth_map)
+
         x1, y1, x2, y2 = bbox
         
-        # We sample the physical ceramic lip (just inside the bottom edge of the bounding box)
+        # We sample the physical ceramic rim (TOP edge of the bounding box)
         thickness_inward = max(4, (y2 - y1) // 10)
         
-        # Take a wide horizontal strip across the cup rather than a tiny center dot
+        # Take a wide horizontal strip across the cup
         px1 = max(x1, x1 + (x2 - x1) // 4)
         px2 = min(x2, x2 - (x2 - x1) // 4)
         
-        # Sample just the bottom lip, pushing exactly 'thickness' pixels inward from the YOLO edge
-        py1 = max(y1, y2 - thickness_inward)
-        py2 = y2
+        # Sample the TOP rim, pushing 'thickness' pixels inward from the top edge (y1)
+        py1 = y1
+        py2 = min(y2, y1 + thickness_inward)
         
         patch = depth_map[py1:py2, px1:px2]
         if patch.size == 0:

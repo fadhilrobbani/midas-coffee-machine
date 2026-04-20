@@ -172,7 +172,9 @@ class MultiVariateCalibrationWindow(Gtk.Window):
                 self.latest_depth = self.depth_estimator.process(frame)
                 self.latest_boxes = self.detector.detect(frame)
                 
-                depth_norm = cv2.normalize(self.latest_depth, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                depth_std = self.depth_estimator.get_standardized_depth(self.latest_depth)
+                depth_norm = (depth_std / 1000.0 * 255.0).astype(np.uint8)
+                
                 if self.latest_boxes:
                     b = self.latest_boxes[0]['bbox']
                     cv2.rectangle(frame, (b[0], b[1]), (b[2], b[3]), (0, 255, 0), 2)
@@ -211,8 +213,11 @@ class MultiVariateCalibrationWindow(Gtk.Window):
             tz_rim = float(self.entry_rim_z.get_text())
             roi = tuple(map(int, self.entry_roi.get_text().split(',')))
         except: return
-        dn = cv2.normalize(self.latest_depth, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        mr, mt = self.depth_estimator.get_rim_depth(dn, self.latest_boxes[0]['bbox']), self.depth_estimator.get_tray_depth(dn, roi)
+        
+        # MidasDepthEstimator now handles standardization internally inside get_rim_depth/get_tray_depth
+        mr = self.depth_estimator.get_rim_depth(self.latest_depth, self.latest_boxes[0]['bbox'])
+        mt = self.depth_estimator.get_tray_depth(self.latest_depth, roi)
+        
         if mt > 0:
             point = {'M_rim': mr, 'M_tray': mt, 'Z_tray': tz_tray, 'Z_rim': tz_rim, 'timestamp': time.time()}
             self.poly_data_points.append(point)
