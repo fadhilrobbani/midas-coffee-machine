@@ -1,0 +1,8 @@
+calibrated_at: '2026-04-08T15:02:08.981000+07:00'
+D_known_cm: 22.4
+P_real_cm: 0.51963
+ref_slats: 27
+median_pitch_px: 17.1
+theta_tilt_deg: 20.0
+camera_index: 2
+notes: Adjusted to target ~18.8cm based on manual calibration point
