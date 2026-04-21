@@ -423,3 +423,10 @@ class TrayDistancePipeline:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 100, 255), 1)
 
         return vis
+        notes = result.get("notes")
+        if notes:
+            y_offset += 25
+            cv2.putText(vis, notes[:80], (10, y_offset),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 100, 255), 1)
+
+        return vis
