@@ -83,8 +83,15 @@ class ArucoDetector:
         # Load dictionary
         if dictionary_name not in DICT_MAP:
             raise ValueError(f"Dictionary tidak dikenal: {dictionary_name}")
-        self.aruco_dict = cv2.aruco.Dictionary_get(DICT_MAP[dictionary_name])
-        self.aruco_params = cv2.aruco.DetectorParameters_create()
+        # Mendukung OpenCV 4.7+ (API baru) dan fallback ke API lama (< 4.7)
+        if hasattr(cv2.aruco, 'getPredefinedDictionary'):
+            self.aruco_dict = cv2.aruco.getPredefinedDictionary(DICT_MAP[dictionary_name])
+        else:
+            self.aruco_dict = cv2.aruco.Dictionary_get(DICT_MAP[dictionary_name])
+        if hasattr(cv2.aruco, 'DetectorParameters') and callable(cv2.aruco.DetectorParameters):
+            self.aruco_params = cv2.aruco.DetectorParameters()
+        else:
+            self.aruco_params = cv2.aruco.DetectorParameters_create()
 
         # Optimasi parameter deteksi untuk kondisi mesin kopi
         self.aruco_params.adaptiveThreshConstant = 7
@@ -127,9 +134,13 @@ class ArucoDetector:
         """
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        corners, ids, rejected = cv2.aruco.detectMarkers(
-            gray, self.aruco_dict, parameters=self.aruco_params
-        )
+        if hasattr(cv2.aruco, 'ArucoDetector'):
+            detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
+            corners, ids, rejected = detector.detectMarkers(gray)
+        else:
+            corners, ids, rejected = cv2.aruco.detectMarkers(
+                gray, self.aruco_dict, parameters=self.aruco_params
+            )
 
         results = []
 
@@ -137,10 +148,24 @@ class ArucoDetector:
             return results
 
         # Estimate pose untuk setiap marker
-        rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(
-            corners, self.marker_size_cm,
-            self.camera_matrix, self.dist_coeffs
-        )
+        rvecs = []
+        tvecs = []
+        half = self.marker_size_cm / 2.0
+        obj_pts = np.array([
+            [-half,  half, 0],
+            [ half,  half, 0],
+            [ half, -half, 0],
+            [-half, -half, 0]
+        ], dtype=np.float32)
+        
+        for i in range(len(ids)):
+            success, rv, tv = cv2.solvePnP(
+                obj_pts, corners[i][0].astype(np.float32), 
+                self.camera_matrix, self.dist_coeffs,
+                flags=cv2.SOLVEPNP_IPPE_SQUARE
+            )
+            rvecs.append([rv.flatten() if rv is not None else np.zeros(3)])
+            tvecs.append([tv.flatten() if tv is not None else np.zeros(3)])
 
         for i in range(len(ids)):
             marker_id = int(ids[i][0])

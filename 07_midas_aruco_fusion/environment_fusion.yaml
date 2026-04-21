@@ -1,0 +1,23 @@
+name: midas-aruco-env
+channels:
+  - pytorch
+  - defaults
+dependencies:
+  - python=3.10.8
+  - pip=22.3.1
+  - pytorch::pytorch=2.3.0
+  - pytorch::torchvision=0.18.0
+  - pytorch::cpuonly
+  - pip:
+    # opencv-contrib-python >=4.10.0 diperlukan untuk kompatibilitas dengan
+    # NumPy 2.x yang ditarik oleh ultralytics. Versi lama (4.6.x) berkonflik.
+    - "opencv-contrib-python>=4.10.0"
+    # MiDaS backbone dependencies
+    - timm==0.6.12
+    - einops==0.6.0
+    # YOLO (Ultralytics YOLOv8)
+    - ultralytics>=8.0.0
+    # Utilities
+    - pyyaml>=6.0
+    - matplotlib
+    - imutils==0.5.4
