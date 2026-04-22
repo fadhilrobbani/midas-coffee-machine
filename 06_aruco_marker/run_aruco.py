@@ -94,6 +94,21 @@ def run_live_camera(detector, camera_index=0, lock_focus=False, focus_value=0):
         actual_focus = cap.get(cv2.CAP_PROP_FOCUS)
         print(f"[CAMERA] ✅ Focus LOCKED: auto-focus OFF, focus={actual_focus}")
 
+    # Warm-up: drain V4L2 buffer agar frame pertama tidak timeout
+    print("[CAMERA] Warming up...")
+    warmed = False
+    for _ in range(30):
+        ret, _ = cap.read()
+        if ret:
+            warmed = True
+            break
+        time.sleep(0.05)
+    if not warmed:
+        print(f"Error: Kamera index {camera_index} tidak bisa memberikan frame. "
+              f"Pastikan kamera terhubung dan tidak dipakai aplikasi lain.")
+        cap.release()
+        return
+
     print(f"\nLive camera started (index={camera_index})")
     print("Press 'q' to exit | 's' screenshot")
     if lock_focus:
