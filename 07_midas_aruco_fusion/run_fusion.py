@@ -1,22 +1,14 @@
 """
 run_fusion.py — ArUco + MiDaS + YOLO Cup Height Estimator
 =============================================================
-Eksperimen penggabungan 3 sistem tanpa kalibrasi kurva (polynomial).
-ArUco Marker memberikan Z_tray absolut sebagai jangkar _real-time_,
-lalu MiDaS + YOLO mengukur posisi bibir gelas secara geometri.
+Sistem estimasi tinggi gelas dengan ArUco sebagai jangkar jarak absolut
+dan MiDaS + YOLO untuk pemetaan kedalaman relatif bibir gelas.
 
 Fitur:
-  - Estimasi Asynchronous (ArUco 30 FPS, MiDaS 5 FPS)
-  - Video Recording (Tekan 'R')
-  - Screenshot (Tekan 'S')
-  - Session Report lengkap .MD/.JSON di folder `results/` saat keluar
-
-Cara Pengunaan:
-  python run_fusion.py                      → kamera default (index 0)
-  python run_fusion.py --camera 2           → kamera index 2
-  python run_fusion.py --headless           → tanpa UI (mode Kakip)
-  python run_fusion.py --marker-size 1.5    → ukuran sisi ArUco fisik (cm)
-  python run_fusion.py --alpha 1.0          → fine-tuning skala geometri
+  - Auto-calibration 1-Point: --calibrate 1 --true-height 7.6
+  - Auto-calibration 2-Point: --calibrate 2 --true-height 7.6 --true-height-2 10.2
+  - Mode live otomatis membaca calibration.json (format bebas 1-pt / 2-pt)
+  - Recording (R), Screenshot (S), Report (Q/ESC)
 """
 
 import os
@@ -57,25 +49,93 @@ except ImportError as e:
 
 
 # ── Persiapan Direktori Hasil ─────────────────────────────────────────────
-RESULT_DIR = os.path.join(_THIS_DIR, "results")
-REPORT_DIR = os.path.join(RESULT_DIR, "report")
-VIDEO_DIR  = os.path.join(RESULT_DIR, "video")
+RESULT_DIR     = os.path.join(_THIS_DIR, "results")
+REPORT_DIR     = os.path.join(RESULT_DIR, "report")
+VIDEO_DIR      = os.path.join(RESULT_DIR, "video")
 SCREENSHOT_DIR = os.path.join(RESULT_DIR, "live_cam")
+CALIB_PATH     = os.path.join(_THIS_DIR, "calibration.json")
 
 for d in [REPORT_DIR, VIDEO_DIR, SCREENSHOT_DIR]:
     os.makedirs(d, exist_ok=True)
 
 
 # ╔═════════════════════════════════════════════════════════════════════════╗
+# ║  KALIBRASI: Save / Load                                                 ║
+# ╚═════════════════════════════════════════════════════════════════════════╝
+
+def load_calibration() -> dict:
+    """Load config calibration.json."""
+    if not os.path.exists(CALIB_PATH):
+        return {}
+    try:
+        with open(CALIB_PATH) as f:
+            data = json.load(f)
+        ctype = data.get("type", 1)
+        if ctype == 1:
+            print(f"[CALIB] ✅ Ditemukan model 1-Point. K={data.get('K',0):.5f}")
+        else:
+            print(f"[CALIB] ✅ Ditemukan model 2-Point. m={data.get('m',0):.5f}, c={data.get('c',0):.5f}")
+        return data
+    except Exception as e:
+        print(f"[CALIB] ⚠ Gagal baca calibration.json: {e}")
+        return {}
+
+
+def save_calibration_1p(K: float, z_tray_ref: float, ratio_ref: float, true_height: float):
+    data = {
+        "type": 1,
+        "K": K,
+        "z_tray_ref_cm": z_tray_ref,
+        "ratio_ref": ratio_ref,
+        "true_height_cm": true_height,
+        "calibrated_at": datetime.now().isoformat()
+    }
+    with open(CALIB_PATH, "w") as f:
+        json.dump(data, f, indent=2)
+    print(f"[CALIB] 💾 Tersimpan 1-Point → {CALIB_PATH}")
+
+
+def save_calibration_2p(m: float, c: float, data1: dict, data2: dict):
+    data = {
+        "type": 2,
+        "m": m,
+        "c": c,
+        "data1": data1,
+        "data2": data2,
+        "calibrated_at": datetime.now().isoformat()
+    }
+    with open(CALIB_PATH, "w") as f:
+        json.dump(data, f, indent=2)
+    print(f"[CALIB] 💾 Tersimpan 2-Point → {CALIB_PATH}")
+
+
+def calc_height_1point(m_rim: float, m_tray: float, z_tray: float, K: float) -> float:
+    if m_tray <= 0 or z_tray <= 0: return 0.0
+    ratio = m_rim / m_tray
+    if ratio <= 0: return 0.0
+    cup_height = z_tray * (1.0 - K / ratio)
+    return cup_height if cup_height > 0 else 0.0
+
+
+def calc_height_2point(m_rim: float, m_tray: float, z_tray: float, m: float, c: float) -> float:
+    # H/Z = m * R + c
+    if m_tray <= 0 or z_tray <= 0: return 0.0
+    ratio = m_rim / m_tray
+    if ratio <= 0: return 0.0
+    cup_height = z_tray * (m * ratio + c)
+    return cup_height if cup_height > 0 else 0.0
+
+
+# ╔═════════════════════════════════════════════════════════════════════════╗
 # ║  PIPELINE UTAMA                                                         ║
 # ╚═════════════════════════════════════════════════════════════════════════╝
 
-def run_pipeline(camera_idx: int, headless: bool, alpha: float, marker_size: float):
+def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
+                 marker_size: float, calibrate_mode: int, true_height: float, true_height_2: float):
     print("=" * 55)
     print("  🚀  ArUco + MiDaS + YOLO  |  Cup Height Estimator")
     print("=" * 55)
 
-    # ── 1. Inisialisasi Detektor ─────────────────────────────────────
     print("[INIT] Memuat ArucoDetector...")
     aruco = ArucoDetector(marker_size_cm=marker_size)
     print("[INIT] Memuat YoloDetector...")
@@ -84,7 +144,6 @@ def run_pipeline(camera_idx: int, headless: bool, alpha: float, marker_size: flo
     midas = MidasDepthEstimator()
     print("[INIT] ✅ Semua detektor siap.\n")
 
-    # ── 2. Setup Kamera ────────────────────────────────────────────────────
     cap = cv2.VideoCapture(camera_idx)
     if not cap.isOpened():
         print(f"[ERROR] Tidak bisa membuka kamera index {camera_idx}")
@@ -93,18 +152,197 @@ def run_pipeline(camera_idx: int, headless: bool, alpha: float, marker_size: flo
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-    for _ in range(20):
+    time.sleep(2.0)
+    for attempt in range(30):
         ret, _ = cap.read()
         if ret: break
-        time.sleep(0.05)
+        time.sleep(0.2)
+    else:
+        print("[ERROR] Kamera mati.")
+        cap.release()
+        return
+
+    # ── 3a. KALIBRASI IN-SESSION ──────────────────────────────────────────
+    if calibrate_mode > 0:
+        CALIB_WARMUP_SEC  = 5.0
+        CALIB_SAMPLE_SEC  = 8.0
+        
+        calib_ratios_1, calib_z_trays_1 = [], []
+        calib_ratios_2, calib_z_trays_2 = [], []
+        
+        phase = "warmup_1"
+        calib_start = time.time()
+        
+        print(f"━" * 55)
+        print(f"  ⚙  KALIBRASI BERSYARAT IN-SESSION ({calibrate_mode}-Point)")
+        print(f"━" * 55)
+
+        last_midas_calib = 0.0
+        boxes = None
+        
+        while phase != "done":
+            ret, frame = cap.read()
+            if not ret:
+                time.sleep(0.05)
+                continue
+
+            elapsed = time.time() - calib_start
+            h_f, w_f = frame.shape[:2]
+
+            if last_midas_calib == 0.0 or (time.time() - last_midas_calib) > 1.0:
+                # If YOLO didn't run recently, clear old boxes
+                boxes = None
+
+            aruco_results = aruco.detect(frame)
+            z_calib = 0.0
+            aruco_roi_c = None
+            if aruco_results:
+                best = aruco.get_best_distance(aruco_results)
+                if best:
+                    z_calib = best["distance_cm"]
+                    corners = aruco_results[0].get("corners")
+                    if corners is not None:
+                        pts = np.array(corners, dtype=np.float32)
+                        x1c, y1c = np.min(pts, axis=0).astype(int)
+                        x2c, y2c = np.max(pts, axis=0).astype(int)
+                        aruco_roi_c = (x1c + 2, y1c + 2, x2c - 2, y2c - 2)
+
+            if (time.time() - last_midas_calib) > 0.2 and z_calib > 0 and aruco_roi_c:
+                boxes = yolo.detect(frame)
+                if boxes:
+                    bbox_c = boxes[0]["bbox"]
+                    dm = midas.process(frame)
+                    last_midas_calib = time.time()
+
+                    m_rim  = midas.get_rim_depth(dm, bbox_c)
+                    m_tray = midas.get_tray_depth(dm, aruco_roi_c)
+
+                    if m_rim > 0 and m_tray > 0:
+                        if phase == "sampling_1":
+                            calib_ratios_1.append(m_rim / m_tray)
+                            calib_z_trays_1.append(z_calib)
+                        elif phase == "sampling_2":
+                            calib_ratios_2.append(m_rim / m_tray)
+                            calib_z_trays_2.append(z_calib)
+                else:
+                    last_midas_calib = time.time()
+
+            # Transisi fase otomatis per timer (dan sample count)
+            if phase == "warmup_1" and elapsed >= CALIB_WARMUP_SEC:
+                phase = "sampling_1"
+                calib_start = time.time()  # Reset timer untuk sampling
+                elapsed = 0.0
+            elif phase == "sampling_1":
+                if len(calib_ratios_1) >= 5:
+                    if calibrate_mode == 1:
+                        phase = "done"
+                    else:
+                        phase = "swap_wait"
+                elif elapsed > 30.0:
+                    print("[CALIB] Timeout: Tidak bisa mendeteksi gelas 1 dengan benar (YOLO/ArUco gagal).")
+                    phase = "done"
+
+            elif phase == "warmup_2" and elapsed >= CALIB_WARMUP_SEC:
+                phase = "sampling_2"
+                calib_start = time.time()
+                elapsed = 0.0
+            elif phase == "sampling_2":
+                if len(calib_ratios_2) >= 5:
+                    phase = "done"
+                elif elapsed > 30.0:
+                    print("[CALIB] Timeout: Tidak bisa mendeteksi gelas 2 dengan benar (YOLO/ArUco gagal).")
+                    phase = "done"
+
+            # UI Overlay Kalibrasi
+            disp_c = frame.copy()
+            if aruco_results:
+                disp_c = aruco.annotate_frame(disp_c, aruco_results)
+
+            # Gambar bounding box Yolo saat kalibrasi agar user tahu Yolo melihat gelasnya
+            if boxes:
+                for b in boxes:
+                    x1c, y1c, x2c, y2c = b["bbox"]
+                    cv2.rectangle(disp_c, (x1c, y1c), (x2c, y2c), (0, 255, 80), 2)
+
+            cv2.rectangle(disp_c, (8, 8), (530, 95), (20, 20, 40), -1)
+            cv2.rectangle(disp_c, (8, 8), (530, 95), (0, 200, 255), 1)
+
+            # Indikator Hardware
+            status_aruco = "OK" if z_calib > 0 else "TIDAK DITEMUKAN"
+            status_yolo  = "OK" if boxes else "TIDAK DITEMUKAN"
+            cv2.putText(disp_c, f"[ArUco: {status_aruco}]  [YOLO: {status_yolo}]", (18, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+
+            if phase.startswith("warmup_"):
+                idx = phase[-1]
+                pct = min(100, int((elapsed / CALIB_WARMUP_SEC) * 100))
+                H_t = true_height if idx == "1" else true_height_2
+                cv2.putText(disp_c, f"PEMANASAN GELAS {idx} (H={H_t}cm)", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 255), 1)
+                cv2.putText(disp_c, f"Jangan sentuh/pindah gelas. Prog: {pct}%", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 200, 255), 1)
+
+            elif phase.startswith("sampling_"):
+                idx = phase[-1]
+                n = len(calib_ratios_1) if idx == "1" else len(calib_ratios_2)
+                cv2.putText(disp_c, f"MENGAMBIL DATA GELAS {idx} (Terkumpul: {n}/5)", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 180), 1)
+                cv2.putText(disp_c, "Pastikan kamera diam & melihat gelas utuh...", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 255, 200), 1)
+
+            elif phase == "swap_wait":
+                cv2.rectangle(disp_c, (8, 8), (530, 95), (200, 50, 50), -1)
+                cv2.putText(disp_c, "GANTI GELAS SEKARANG", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                cv2.putText(disp_c, f"Letakkan gelas setinggi {true_height_2} cm di nampan.", (18, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 220, 255), 1)
+                cv2.putText(disp_c, "Lalu TEKAN 'SPC' (SPASI) untuk lanjut.", (18, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 255, 100), 1)
+
+            if not headless:
+                cv2.imshow("ArUco + MiDaS | Cup Height Estimator", disp_c)
+                key = cv2.waitKey(1) & 0xFF
+                if key == 27:
+                    cap.release()
+                    cv2.destroyAllWindows()
+                    sys.exit(0)
+                if phase == "swap_wait" and key == ord(' '):
+                    calib_start = time.time()
+                    phase = "warmup_2"
+
+        # Hitung hasil kalibrasi
+        if len(calib_ratios_1) < 3:
+            print("[CALIB] Error: Data gelas 1 tidak cukup.")
+            return
+
+        R1 = float(np.mean(calib_ratios_1))
+        Z1 = float(np.mean(calib_z_trays_1))
+        
+        if calibrate_mode == 1:
+            K_factor = R1 * (1.0 - true_height / Z1)
+            save_calibration_1p(K_factor, Z1, R1, true_height)
+            calib_data = {"type": 1, "K": K_factor}
+        else:
+            if len(calib_ratios_2) < 3:
+                print("[CALIB] Error: Data gelas 2 tidak cukup.")
+                return
+            R2 = float(np.mean(calib_ratios_2))
+            Z2 = float(np.mean(calib_z_trays_2))
+            
+            # Linear Fit: H/Z = m * R + c
+            # Titik 1: Y1 = H1/Z1, Titik 2: Y2 = H2/Z2
+            Y1 = true_height / Z1
+            Y2 = true_height_2 / Z2
+            
+            if abs(R2 - R1) < 0.05:
+                print("[CALIB] Error: Kedua gelas memiliki ukuran bibir/jarak yang terlalu identik di mata MiDaS.")
+                print("       Gunakan gelas yang tingginya terpaut agak jauh (misal 7.6cm dan 11cm).")
+                return
+                
+            m = (Y2 - Y1) / (R2 - R1)
+            c = Y1 - m * R1
+            save_calibration_2p(m, c, 
+                                {"R": R1, "Z": Z1, "H": true_height}, 
+                                {"R": R2, "Z": Z2, "H": true_height_2})
+            calib_data = {"type": 2, "m": m, "c": c}
+            
+        print("[CALIB] ✅ Berhasil. Masuk LIVE mode!\n")
 
     print(f"[CAMERA] Aktif (index={camera_idx}) | Headless={headless}")
-    if not headless:
-        print("         Tekan 'S' untuk Screenshot.")
-        print("         Tekan 'R' untuk Record Video.")
-        print("         Tekan 'Q' / ESC untuk Keluar & Buat Report.\n")
-
-    # ── 3. State Asynchronous Pipeline ────────────────────────────────────
+    
+    # ── 3b. State Asynchronous Pipeline (Live Mode) ────────────────────────
     MIDAS_FPS_LIMIT = 5.0
     midas_interval  = 1.0 / MIDAS_FPS_LIMIT
     last_midas_t    = 0.0
@@ -114,26 +352,23 @@ def run_pipeline(camera_idx: int, headless: bool, alpha: float, marker_size: flo
     cup_bbox:       tuple | None = None
     cup_height_ema: float | None = None
     last_depth_norm = None
-    EMA_ALPHA = 0.3
+    EMA_ALPHA = 0.35
 
-    # ── 4. State Reporting & Recording ────────────────────────────────────
     is_recording = False
     video_writer = None
     screenshot_paths = []
-    
+
     stats_total_frames = 0
     stats_midas_runs = 0
-    
+
     history_z_tray = []
     history_cup_h = []
     history_frames = []
 
-    # ── 5. Loop Utama ─────────────────────────────────────────────────────
     try:
         while True:
             ret, frame = cap.read()
             if not ret:
-                print("[WARN] Gagal membaca frame. Mencoba ulang...")
                 time.sleep(0.1)
                 continue
 
@@ -141,11 +376,7 @@ def run_pipeline(camera_idx: int, headless: bool, alpha: float, marker_size: flo
             stats_total_frames += 1
             h_frame, w_frame = frame.shape[:2]
 
-            # ──────────────────────────────────────────────────────────────────
-            # TREK CEPAT (ArUco)  — berjalan setiap frame (≈30 FPS)
-            # ──────────────────────────────────────────────────────────────────
             aruco_results = aruco.detect(frame)
-
             if aruco_results:
                 best = aruco.get_best_distance(aruco_results)
                 if best:
@@ -159,9 +390,6 @@ def run_pipeline(camera_idx: int, headless: bool, alpha: float, marker_size: flo
                         pad_y  = max(2, (y2 - y1) // 10)
                         aruco_roi = (x1 + pad_x, y1 + pad_y, x2 - pad_x, y2 - pad_y)
 
-            # ──────────────────────────────────────────────────────────────────
-            # TREK BERAT (YOLO + MiDaS) — terbatas <= 5 FPS
-            # ──────────────────────────────────────────────────────────────────
             if (now - last_midas_t) >= midas_interval and z_tray_live > 0 and aruco_roi:
                 boxes = yolo.detect(frame)
                 if boxes:
@@ -175,16 +403,20 @@ def run_pipeline(camera_idx: int, headless: bool, alpha: float, marker_size: flo
                     m_tray = midas.get_tray_depth(depth_map, aruco_roi)
 
                     if m_tray > 0 and m_rim > 0:
-                        z_rim = calculate_z_rim_alpha(m_rim, m_tray, z_tray_live, alpha)
-                        height_raw = z_tray_live - z_rim
+                        if calib_data.get("type") == 2:
+                            m_val = calib_data.get("m", 0.1)
+                            c_val = calib_data.get("c", 0.0)
+                            height_raw = calc_height_2point(m_rim, m_tray, z_tray_live, m_val, c_val)
+                        else:
+                            K_val = calib_data.get("K", 0.8)
+                            height_raw = calc_height_1point(m_rim, m_tray, z_tray_live, K_val)
 
                         if height_raw > 0:
                             if cup_height_ema is None:
                                 cup_height_ema = height_raw
                             else:
                                 cup_height_ema = (EMA_ALPHA * height_raw) + ((1.0 - EMA_ALPHA) * cup_height_ema)
-                            
-                            # Record to history array
+
                             history_z_tray.append(z_tray_live)
                             history_cup_h.append(cup_height_ema)
                             history_frames.append(stats_total_frames)
@@ -192,19 +424,13 @@ def run_pipeline(camera_idx: int, headless: bool, alpha: float, marker_size: flo
                 else:
                     cup_bbox = None
                     cup_height_ema = None
-                    # Jika tidak ada gelas, nilai z_tray tetap dicatat untuk referensi stability tray
                     history_z_tray.append(z_tray_live)
                     history_cup_h.append(0.0)
                     history_frames.append(stats_total_frames)
 
                 last_midas_t = now
 
-            # ──────────────────────────────────────────────────────────────────
-            # OUTPUT & RECORDING
-            # ──────────────────────────────────────────────────────────────────
             disp = frame.copy()
-            
-            # Update Disp layer
             if aruco_results:
                 disp = aruco.annotate_frame(disp, aruco_results)
             if aruco_roi:
@@ -213,11 +439,9 @@ def run_pipeline(camera_idx: int, headless: bool, alpha: float, marker_size: flo
                 x1c, y1c, x2c, y2c = cup_bbox
                 cv2.rectangle(disp, (x1c, y1c), (x2c, y2c), (0, 255, 80), 2)
 
-            # Panel UI
             cv2.rectangle(disp, (8, 8), (420, 90), (25, 25, 25), -1)
             cv2.rectangle(disp, (8, 8), (420, 90), (90, 90, 90), 1)
 
-            # ── Picture-in-Picture: MiDaS Depth Map ───────────────────────────
             if last_depth_norm is not None:
                 depth_color = cv2.applyColorMap(last_depth_norm, cv2.COLORMAP_JET)
                 pip_h, pip_w = int(h_frame / 3.0), int(w_frame / 3.0)
@@ -240,7 +464,6 @@ def run_pipeline(camera_idx: int, headless: bool, alpha: float, marker_size: flo
                 cv2.putText(disp, "-- cm", (18, 75), cv2.FONT_HERSHEY_DUPLEX, 1.4, (70, 70, 70), 2)
                 cv2.putText(disp, hint, (220, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 130, 255), 1)
 
-            # REC Indicator
             if is_recording:
                 if int(time.time() * 2) % 2 == 0:
                     cv2.circle(disp, (w_frame - 65, 25), 6, (0, 0, 255), -1)
@@ -248,7 +471,6 @@ def run_pipeline(camera_idx: int, headless: bool, alpha: float, marker_size: flo
                 if video_writer is not None:
                     video_writer.write(disp)
 
-            # Status bar bawah
             cv2.rectangle(disp, (0, h_frame - 26), (w_frame, h_frame), (15, 15, 15), -1)
             bar_txt = f"ArUco: {'OK' if z_tray_live else 'X'} | YOLO: {'OK' if cup_bbox else 'X'} | [R] Record  [S] Screen  [Q] Quit"
             cv2.putText(disp, bar_txt, (10, h_frame - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (130, 200, 130), 1)
@@ -291,10 +513,10 @@ def run_pipeline(camera_idx: int, headless: bool, alpha: float, marker_size: flo
         if video_writer: video_writer.release()
         cap.release()
         if not headless: cv2.destroyAllWindows()
-        print("\n[DONE] Pipeline ditutup. Mempersiapkan Laporan Akhir (Report)...")
-        
+
+        print("\n[DONE] Pipeline ditutup. Mempersiapkan Laporan Akhir...")
         _generate_session_report(
-            alpha=alpha,
+            calib_data=calib_data,
             marker_size_cm=marker_size,
             focal_len=aruco.camera_matrix[0,0],
             total_frames=stats_total_frames,
@@ -309,7 +531,7 @@ def run_pipeline(camera_idx: int, headless: bool, alpha: float, marker_size: flo
 # ║  REPORT GENERATOR                                                       ║
 # ╚═════════════════════════════════════════════════════════════════════════╝
 
-def _generate_session_report(alpha, marker_size_cm, focal_len, total_frames, midas_runs, 
+def _generate_session_report(calib_data, marker_size_cm, focal_len, total_frames, midas_runs,
                              history_z_tray, history_cup_h, history_frames, screenshots):
     
     valid_cups = [h for h in history_cup_h if h > 0]
@@ -338,7 +560,6 @@ def _generate_session_report(alpha, marker_size_cm, focal_len, total_frames, mid
     report_folder = os.path.join(REPORT_DIR, ts_folder)
     os.makedirs(report_folder, exist_ok=True)
     
-    # Bikin Chart
     plt.figure(figsize=(10, 6))
     plt.plot(history_frames, history_z_tray, label='Z_tray (ArUco)', color='blue', alpha=0.6)
     plt.plot(history_frames, history_cup_h, label='Cup Height (Fusion)', color='green', linewidth=2)
@@ -353,7 +574,6 @@ def _generate_session_report(alpha, marker_size_cm, focal_len, total_frames, mid
     plt.savefig(chart_path)
     plt.close()
     
-    # Kopi Screenshots
     ss_target = []
     if screenshots:
         ss_sub = os.path.join(report_folder, "screenshots")
@@ -364,26 +584,45 @@ def _generate_session_report(alpha, marker_size_cm, focal_len, total_frames, mid
             shutil.copy2(s, dst)
             ss_target.append(f"screenshots/{basename}")
             
-    # Tulis MD
     md_path = os.path.join(report_folder, "report.md")
     with open(md_path, "w") as f:
         f.write("# ArUco + MiDaS Fusion Session Report\n\n")
         f.write(f"**Date/Time:** {ts_folder.replace('_', ' ')}\n\n")
-        
+
         f.write("## 1. Parameters\n")
-        f.write(f"- Marker Size: {marker_size_cm} cm\n")
-        f.write(f"- Formula Alpha: {alpha}\n")
-        f.write(f"- Camera Focal Length: {focal_len:.1f} px\n\n")
+        f.write("Parameters used during this AI depth fusion session:\n\n")
+        f.write("| Parameter | Value |\n")
+        f.write("| :--- | :--- |\n")
+        f.write(f"| **Physical Marker Size** | {marker_size_cm} cm |\n")
         
-        f.write("## 2. Global Results\n")
-        f.write(f"- **Avg Cup Height**: {avg_h:.2f} cm\n")
-        f.write(f"- **Min / Max Cup Height**: {min_h:.2f} cm / {max_h:.2f} cm\n")
-        f.write(f"- **Standard Deviation (Precision jitter)**: ± {std_h:.2f} cm\n")
-        f.write(f"- **Avg Z_tray Anchor**: {avg_z:.2f} cm\n")
-        f.write(f"- Total Frames Streamed: {total_frames}\n")
-        f.write(f"- Total MiDaS Inferences: {midas_runs}\n\n")
+        calib_str = "1-Point K-Factor"
+        if calib_data.get("type") == 2:
+            calib_str = f"2-Point Linear (m={calib_data.get('m',0):.5f}, c={calib_data.get('c',0):.5f})"
+        elif calib_data.get("type") == 1:
+            calib_str = f"1-Point K-Factor (K={calib_data.get('K',0):.5f})"
+            
+        f.write(f"| **Calibration Model** | {calib_str} |\n")
+        f.write(f"| **Camera Focal Length** | {focal_len:.1f} px |\n\n")
+
+        f.write("## 2. Global Stability Summary\n")
+        f.write("Statistical summary of cup height predictions gathered over the running frames:\n\n")
         
-        f.write("## 3. Session Chart\n")
+        f.write("| Metric | Value | Description |\n")
+        f.write("| :--- | :--- | :--- |\n")
+        f.write(f"| **Average Cup Height** | **{avg_h:.2f} cm** | Mean of all valid predictions. |\n")
+        if valid_cups:
+            p50 = float(np.median(valid_cups))
+            p95 = float(np.percentile(valid_cups, 95))
+            p05 = float(np.percentile(valid_cups, 5))
+            f.write(f"| **Median Height (P50)** | **{p50:.2f} cm** | Most representative single value. |\n")
+            f.write(f"| **Precision Error (P95−P5)** | **{p95 - p05:.2f} cm** | 90% of readings fall within this range. |\n")
+        f.write(f"| **Standard Deviation ($\sigma$)** | {std_h:.2f} cm | Consistency / jitter of the AI model. |\n")
+        f.write(f"| **Tray Anchor Depth (Z)** | {avg_z:.2f} cm | Average physical depth of the tray. |\n")
+        f.write(f"| **Minimum / Maximum Height** | {min_h:.2f} / {max_h:.2f} cm | Extremes recorded. |\n")
+        f.write(f"| **Total Frames / Inferences** | {total_frames} / {midas_runs} | Pipeline tracking efficiency. |\n\n")
+
+        f.write("## 3. Visual Evidence\n")
+        f.write("### Depth Tracking Chart\n")
         f.write("![Session Chart](session_chart.png)\n\n")
         
         if ss_target:
@@ -391,13 +630,12 @@ def _generate_session_report(alpha, marker_size_cm, focal_len, total_frames, mid
             for ss in ss_target:
                 f.write(f"- ![{ss}]({ss})\n")
 
-    # Generate JSON
     json_path = os.path.join(report_folder, "session_data.json")
     json_data = {
         "session_timestamp": ts_folder,
         "parameters": {
             "marker_size_cm": marker_size_cm,
-            "alpha": alpha,
+            "calibration_model": calib_data,
             "focal_length_px": float(focal_len)
         },
         "summary": {
@@ -428,10 +666,37 @@ def _generate_session_report(alpha, marker_size_cm, focal_len, total_frames, mid
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="ArUco + MiDaS Cup Height Estimator")
-    ap.add_argument("--camera",      type=int,   default=0,   help="Index kamera (default: 0)")
-    ap.add_argument("--headless",    action="store_true",      help="Tanpa UI — mode terminal")
-    ap.add_argument("--alpha",       type=float, default=1.0,  help="Skala geometri z_rim (default: 1.0)")
-    ap.add_argument("--marker-size", type=float, default=5.0,  help="Ukuran Fisik ArUco di meja (cm)")
+    ap.add_argument("--camera",       type=int,   default=0,     help="Index kamera (default: 0)")
+    ap.add_argument("--headless",     action="store_true",        help="Tanpa UI — mode terminal")
+    ap.add_argument("--marker-size",  type=float, default=5.0,   help="Ukuran Fisik ArUco di meja (cm)")
+    ap.add_argument("--calibrate",    type=int,   default=0, choices=[0,1,2], help="0: Live, 1: Kalibrasi 1-Point, 2: Kalibrasi 2-Point")
+    ap.add_argument("--true-height",  type=float, default=None,  help="Tinggi gelas (cm) untuk 1-Point atau Gelas ke-1 di 2-Point.")
+    ap.add_argument("--true-height-2",type=float, default=None,  help="Tinggi gelas ke-2 (cm) khusus untuk 2-Point kalibrasi.")
 
     args = ap.parse_args()
-    run_pipeline(args.camera, args.headless, args.alpha, args.marker_size)
+
+    calib_data = {}
+    if args.calibrate > 0:
+        if args.calibrate == 1 and args.true_height is None:
+            print("[ERROR] 1-Point kalibrasi butuh --true-height")
+            sys.exit(1)
+        if args.calibrate == 2 and (args.true_height is None or args.true_height_2 is None):
+            print("[ERROR] 2-Point kalibrasi butuh --true-height DAN --true-height-2")
+            print("Contoh: --calibrate 2 --true-height 7.6 --true-height-2 10.2")
+            sys.exit(1)
+    else:
+        calib_data = load_calibration()
+        if not calib_data:
+            print("[ERROR] calibration.json tidak ada! Harap kalibrasi dulu:")
+            print("  python run_fusion.py --calibrate 2 --true-height 7.6 --true-height-2 10.2")
+            sys.exit(1)
+
+    run_pipeline(
+        camera_idx=args.camera,
+        headless=args.headless,
+        calib_data=calib_data,
+        marker_size=args.marker_size,
+        calibrate_mode=args.calibrate,
+        true_height=args.true_height or 0.0,
+        true_height_2=args.true_height_2 or 0.0
+    )
