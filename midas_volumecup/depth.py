@@ -104,4 +104,8 @@ class MidasDepthEstimator:
         patch = depth_map[py1:py2, px1:px2]
         if patch.size == 0:
             return 0
-        return float(np.median(patch))
+            
+        # MiDaS outputs disparity (higher value = closer to camera). 
+        # Using np.max finds the absolute highest peak (the rim itself) 
+        # and naturally ignores the 'smudgery' or background/table pixels blending into the ROI.
+        return float(np.max(patch))
