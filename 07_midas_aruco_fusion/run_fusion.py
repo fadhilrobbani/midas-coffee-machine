@@ -142,16 +142,46 @@ def save_calibration_4p(m_ref: float, c_ref: float, ref_area: float, z_low: floa
     print(f"[CALIB] 💾 Saved BBox Area (type 4) → {CALIB_PATH}")
 
 
-def save_calibration_5p(K_geom: float, true_height: float):
+def save_calibration_5p(poly_Kgeom: list, z_grid: list, true_height: float):
     data = {
         "type": 5,
-        "K_geom": K_geom,
+        "poly_Kgeom": poly_Kgeom,
+        "z_grid_points": z_grid,
         "true_height_cm": true_height,
         "calibrated_at": datetime.now().isoformat()
     }
     with open(CALIB_PATH, "w") as f:
         json.dump(data, f, indent=2)
-    print(f"[CALIB] 💾 Saved Geometric Projection (type 5) → {CALIB_PATH}")
+    print(f"[CALIB] 💾 Saved Geometric Z-Grid (type 5) → {CALIB_PATH}")
+
+
+def save_calibration_6p(poly_m: list, poly_c: list, z_grid: list, h1: float, h2: float):
+    data = {
+        "type": 6,
+        "poly_m": poly_m,
+        "poly_c": poly_c,
+        "z_grid_points": z_grid,
+        "true_height_cm_1": h1,
+        "true_height_cm_2": h2,
+        "calibrated_at": datetime.now().isoformat()
+    }
+    with open(CALIB_PATH, "w") as f:
+        json.dump(data, f, indent=2)
+    print(f"[CALIB] 💾 Saved Bilateral Z-Grid (type 6) → {CALIB_PATH}")
+
+
+def save_calibration_7(A: float, B: float, h1: float, h2: float):
+    data = {
+        "type": 7,
+        "A": A,
+        "B": B,
+        "true_height_cm_1": h1,
+        "true_height_cm_2": h2,
+        "calibrated_at": datetime.now().isoformat()
+    }
+    with open(CALIB_PATH, "w") as f:
+        json.dump(data, f, indent=2)
+    print(f"[CALIB] 💾 Saved Universal Analytic Geometry (type 7) → {CALIB_PATH}")
 
 
 def calc_height_1point(m_rim: float, m_tray: float, z_tray: float, K: float) -> float:
@@ -195,13 +225,35 @@ def calc_height_bbox(m_rim: float, m_tray: float, z_tray: float, bbox: tuple,
     return cup_height if cup_height > 0 else 0.0
 
 
-def calc_height_geom(z_tray: float, bbox: tuple, focal_length_px: float, K_geom: float) -> float:
-    """Type 5: Pure Geometric Projection. H = Z * (bbox_h_px / focal_length) * K_geom.
-    Inherently Z-invariant: when Z doubles, bbox_h_px halves, product stays constant."""
+def calc_height_geom(z_tray: float, bbox: tuple, focal_length_px: float, poly_Kgeom: list) -> float:
+    """Type 5: Geometric Z-Grid. H = Z * (bbox_h_px / focal_length) * poly_Kgeom(Z)"""
     if z_tray <= 0 or focal_length_px <= 0: return 0.0
     x1, y1, x2, y2 = bbox
     bbox_h_px = max(1.0, float(y2 - y1))
-    cup_height = z_tray * (bbox_h_px / focal_length_px) * K_geom
+    K_live = float(np.polyval(poly_Kgeom, z_tray))
+    cup_height = z_tray * (bbox_h_px / focal_length_px) * K_live
+    return cup_height if cup_height > 0 else 0.0
+
+
+def calc_height_bilateral_zgrid(m_rim: float, m_tray: float, z_tray: float, poly_m: list, poly_c: list) -> float:
+    """Type 6: Bilateral Z-Grid. Evaluates independent polynomials for m(Z) and c(Z)."""
+    if m_tray <= 0 or z_tray <= 0: return 0.0
+    ratio = m_rim / m_tray
+    if ratio <= 0: return 0.0
+    m_live = float(np.polyval(poly_m, z_tray))
+    c_live = float(np.polyval(poly_c, z_tray))
+    cup_height = z_tray * (m_live * ratio + c_live)
+    return cup_height if cup_height > 0 else 0.0
+
+
+def calc_height_analytic(z_tray: float, bbox: tuple, A: float, B: float) -> float:
+    """Type 7: Universal Analytic Geometry. H = (bbox_h * Z - A) / (bbox_h + B). No MiDaS."""
+    if z_tray <= 0: return 0.0
+    x1, y1, x2, y2 = bbox
+    bbox_h = float(y2 - y1)
+    denom = (bbox_h + B)
+    if abs(denom) < 1e-4: return 0.0
+    cup_height = (bbox_h * z_tray - A) / denom
     return cup_height if cup_height > 0 else 0.0
 
 
@@ -678,21 +730,25 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
         calib_data = {"type": 4, "m_ref": m_ref4, "c_ref": c_ref4, "ref_bbox_area_px": ref["area"]}
         print("[CALIB] ✅ BBox Area calibration done! Entering LIVE mode.\n")
 
-    # ── 3e. KALIBRASI GEOMETRIC PROJECTION (Type 5) ──────────────────────
+    # ── 3e. KALIBRASI GEOMETRIC Z-GRID (Type 5) ──────────────────────
     elif calibrate_mode == 5:
         focal_length_px = aruco.camera_matrix[0, 0]
         print("━" * 55)
-        print("  ⚙  GEOMETRIC PROJECTION CALIBRATION (Type 5)")
+        print(f"  ⚙  GEOMETRIC Z-GRID CALIBRATION ({n_positions} positions)")
         print(f"     Cup reference height : {true_height} cm")
         print(f"     Camera focal length  : {focal_length_px:.1f} px")
         print("━" * 55)
 
-        CALIB_WARMUP_SEC = 4.0
+        CALIB_WARMUP_SEC = 5.0
+        CALIB_SAMPLE_SEC = 5.0
         phase = "warmup"
         calib_start = time.time()
         boxes = None
         last_det = 0.0
-        g_z_samples, g_h_samples = [], []
+        
+        pos_idx = 0
+        grid_data = []  # will store {"Z": z, "H_px": bbox_h_px}
+        current_g_z, current_g_h = [], []
 
         while phase != "done":
             ret, frame = cap.read()
@@ -709,7 +765,6 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
                 best = aruco.get_best_distance(aruco_results)
                 if best: z_calib = best["distance_cm"]
 
-            # Sample YOLO bbox height at current Z
             if (time.time() - last_det) > 0.15 and z_calib > 0 and phase == "sampling":
                 boxes = yolo.detect(frame)
                 last_det = time.time()
@@ -717,14 +772,23 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
                     x1b, y1b, x2b, y2b = boxes[0]["bbox"]
                     bbox_h = float(y2b - y1b)
                     if bbox_h > 5:
-                        g_z_samples.append(z_calib)
-                        g_h_samples.append(bbox_h)
+                        current_g_z.append(z_calib)
+                        current_g_h.append(bbox_h)
 
             if phase == "warmup" and elapsed >= CALIB_WARMUP_SEC:
                 phase = "sampling"; calib_start = time.time(); elapsed = 0.0
             elif phase == "sampling":
-                if len(g_z_samples) >= 20 or elapsed > 30.0:
-                    phase = "done"
+                if len(current_g_z) >= 30:
+                    avg_z = float(np.median(current_g_z))
+                    avg_h_px = float(np.median(current_g_h))
+                    grid_data.append({"Z": avg_z, "H_px": avg_h_px})
+                    print(f"[CALIB] Position {pos_idx+1}/{n_positions} committed: Z={avg_z:.2f}cm, bbox_H={avg_h_px:.1f}px")
+                    
+                    pos_idx += 1
+                    if pos_idx >= n_positions:
+                        phase = "done"
+                    else:
+                        phase = "swap_wait"
 
             # UI
             disp_c = frame.copy()
@@ -738,35 +802,291 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
             status_a = "OK" if z_calib > 0 else "NOT FOUND"
             status_y = "OK" if boxes else "NOT FOUND"
             cv2.putText(disp_c, f"[ArUco: {status_a}]  [YOLO: {status_y}]", (18, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+            
             if phase == "warmup":
                 pct = min(100, int((elapsed / CALIB_WARMUP_SEC) * 100))
-                cv2.putText(disp_c, f"GEO-PROJ: Warming up... {pct}%", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 1)
-                cv2.putText(disp_c, f"Place cup H={true_height}cm in view. Keep still.", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 220, 255), 1)
+                cv2.putText(disp_c, f"GEO-GRID ({pos_idx+1}/{n_positions}): Warming up... {pct}%", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 1)
+                cv2.putText(disp_c, f"Keep cup {true_height}cm still.", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 220, 255), 1)
             elif phase == "sampling":
-                n5 = len(g_z_samples)
-                cv2.putText(disp_c, f"GEO-PROJ: Sampling ({n5}/20)", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 180), 1)
-                cv2.putText(disp_c, f"Z_tray = {z_calib:.1f} cm  |  Keep cup visible", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 255, 200), 1)
+                n5 = len(current_g_z)
+                cv2.putText(disp_c, f"GEO-GRID ({pos_idx+1}/{n_positions}): Sampling ({n5}/30)", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 180), 1)
+                cv2.putText(disp_c, f"Z_tray = {z_calib:.1f} cm", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 255, 200), 1)
+            elif phase == "swap_wait":
+                cv2.rectangle(disp_c, (8, 8), (535, 100), (40, 40, 150), -1)
+                cv2.putText(disp_c, "MOVE NOZZLE TO NEW HEIGHT", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+                cv2.putText(disp_c, "Wait for camera to auto-focus, then press SPACE.", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 220, 255), 1)
 
             if not headless:
                 cv2.imshow("ArUco + MiDaS | Cup Height Estimator", disp_c)
                 key = cv2.waitKey(1) & 0xFF
                 if key == 27: cap.release(); cv2.destroyAllWindows(); sys.exit(0)
+                if phase == "swap_wait" and key == ord(' '):
+                    calib_start = time.time(); phase = "warmup"
+                    current_g_z, current_g_h = [], []
 
-        if len(g_z_samples) < 3:
-            print("[CALIB] Not enough geometric samples. Aborting.")
-            return
+        # Polynomial Fit
+        Z_pts = np.array([p["Z"] for p in grid_data])
+        H_px_pts = np.array([p["H_px"] for p in grid_data])
+        
+        # K_geom = H_true / (Z_tray * H_px / F)
+        K_pts = true_height / (Z_pts * H_px_pts / focal_length_px)
+        deg = min(len(grid_data) - 1, 2)
+        poly_Kgeom = np.polyfit(Z_pts, K_pts, deg=deg).tolist()
 
-        # K_geom = H_true / (Z * bbox_h_px / focal)
-        Z_arr = np.array(g_z_samples)
-        H_arr = np.array(g_h_samples)
-        K_vals = true_height / (Z_arr * H_arr / focal_length_px)
-        K_geom = float(np.median(K_vals))  # median is more robust than mean
-        print(f"[CALIB] K_geom samples: {K_vals.round(4).tolist()}")
-        print(f"[CALIB] K_geom (median) = {K_geom:.5f}")
+        save_calibration_5p(poly_Kgeom, Z_pts.tolist(), true_height)
+        calib_data = {"type": 5, "poly_Kgeom": poly_Kgeom}
+        print("[CALIB] ✅ Geometric Z-Grid calibration done! Entering LIVE mode.\n")
 
-        save_calibration_5p(K_geom, true_height)
-        calib_data = {"type": 5, "K_geom": K_geom}
-        print("[CALIB] ✅ Geometric Projection calibration done! Entering LIVE mode.\n")
+    # ── 3f. KALIBRASI BILATERAL MIDAS Z-GRID (Type 6) ──────────────────
+    elif calibrate_mode == 6:
+        print("━" * 55)
+        print(f"  ⚙  BILATERAL Z-GRID CALIBRATION ({n_positions} positions X 2 cups)")
+        print(f"     Cup 1 height : {true_height} cm")
+        print(f"     Cup 2 height : {true_height_2} cm")
+        print("━" * 55)
+
+        CALIB_WARMUP = 4.0
+        CALIB_SAMPLE = 4.0
+        phase = "warmup_c1"
+        calib_start = time.time()
+        pos_idx = 0
+        
+        last_midas_calib = 0.0
+        aruco_roi_c = None
+        boxes = None
+
+        m_pts, c_pts, Z_pts = [], [], []
+        r1_samples, r2_samples, z_samples = [], [], []
+
+        while phase != "done":
+            ret, frame = cap.read()
+            if not ret: time.sleep(0.05); continue
+            
+            elapsed = time.time() - calib_start
+            
+            if (time.time() - last_midas_calib) > 1.0: boxes = None
+
+            aruco_results = aruco.detect(frame)
+            z_calib = 0.0
+            aruco_roi_c = None
+            if aruco_results:
+                best = aruco.get_best_distance(aruco_results)
+                if best:
+                    z_calib = best["distance_cm"]
+                    corners = aruco_results[0].get("corners")
+                    if corners is not None:
+                        pts = np.array(corners, dtype=np.float32)
+                        x1c, y1c = np.min(pts, axis=0).astype(int)
+                        x2c, y2c = np.max(pts, axis=0).astype(int)
+                        aruco_roi_c = (x1c + 2, y1c + 2, x2c - 2, y2c - 2)
+
+            if (time.time() - last_midas_calib) > 0.2 and z_calib > 0 and aruco_roi_c and phase.startswith("sample_"):
+                boxes = yolo.detect(frame)
+                if boxes:
+                    bbox_c = boxes[0]["bbox"]
+                    dm = midas.process(frame)
+                    last_midas_calib = time.time()
+
+                    m_rim  = midas.get_rim_depth(dm, bbox_c)
+                    m_tray = midas.get_tray_depth(dm, aruco_roi_c)
+
+                    if m_rim > 0 and m_tray > 0:
+                        if phase == "sample_c1":
+                            r1_samples.append(m_rim / m_tray)
+                            z_samples.append(z_calib)
+                        elif phase == "sample_c2":
+                            r2_samples.append(m_rim / m_tray)
+                else:
+                    last_midas_calib = time.time()
+
+            if phase == "warmup_c1" and elapsed >= CALIB_WARMUP:
+                phase = "sample_c1"; calib_start = time.time(); elapsed = 0.0
+            elif phase == "sample_c1":
+                if len(r1_samples) >= 8:
+                    phase = "swap_c2"; calib_start = time.time()
+            elif phase == "warmup_c2" and elapsed >= CALIB_WARMUP:
+                phase = "sample_c2"; calib_start = time.time(); elapsed = 0.0
+            elif phase == "sample_c2":
+                if len(r2_samples) >= 8:
+                    if len(r1_samples) < 3 or len(r2_samples) < 3:
+                        print(f"[CALIB] Failed sampling at Z-pos {pos_idx+1}. Aborting.")
+                        return
+                    
+                    R1_avg = float(np.median(r1_samples))
+                    R2_avg = float(np.median(r2_samples))
+                    Z_avg = float(np.median(z_samples))
+                    
+                    # Calculate m_i and c_i
+                    # H1/Z = m*R1 + c  and  H2/Z = m*R2 + c
+                    Y1 = true_height / Z_avg
+                    Y2 = true_height_2 / Z_avg
+                    
+                    dR = R2_avg - R1_avg
+                    if abs(dR) < 0.005:
+                        print("[CALIB] ERROR: Both cups registered identical depth ratios.")
+                        return
+                    
+                    m_i = (Y2 - Y1) / dR
+                    c_i = Y1 - m_i * R1_avg
+                    
+                    m_pts.append(m_i); c_pts.append(c_i); Z_pts.append(Z_avg)
+                    print(f"[CALIB] Z-Pos {pos_idx+1}/{n_positions} committed: Z={Z_avg:.1f}cm, m={m_i:.4f}, c={c_i:.4f}")
+                    
+                    pos_idx += 1
+                    r1_samples.clear(); r2_samples.clear(); z_samples.clear()
+                    
+                    if pos_idx >= n_positions:
+                        phase = "done"
+                    else:
+                        phase = "swap_z"
+
+            disp_c = frame.copy()
+            if aruco_results: disp_c = aruco.annotate_frame(disp_c, aruco_results)
+            if boxes:
+                for b in boxes:
+                    x1b, y1b, x2b, y2b = b["bbox"]
+                    cv2.rectangle(disp_c, (x1b, y1b), (x2b, y2b), (0, 255, 80), 2)
+            cv2.rectangle(disp_c, (8, 8), (535, 100), (20, 20, 40), -1)
+            cv2.rectangle(disp_c, (8, 8), (535, 100), (0, 220, 120), 1)
+
+            cv2.putText(disp_c, f"[ArUco: {'OK' if z_calib>0 else 'NO'}] [pos: {pos_idx+1}/{n_positions}]", (18, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+
+            if phase.startswith("warmup_c"):
+                idx = 1 if "c1" in phase else 2
+                H_t = true_height if idx == 1 else true_height_2
+                pct = min(100, int((elapsed / CALIB_WARMUP) * 100))
+                cv2.putText(disp_c, f"BILATERAL GRID: Warming Up Cup {idx} ... {pct}%", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 1)
+                cv2.putText(disp_c, f"Place {H_t}cm cup. Keep still.", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 220, 255), 1)
+            elif phase.startswith("sample_c"):
+                idx = 1 if "c1" in phase else 2
+                cnt = len(r1_samples) if idx == 1 else len(r2_samples)
+                cv2.putText(disp_c, f"BILATERAL GRID: Sampling Cup {idx} ({cnt}/8)", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 180), 1)
+                cv2.putText(disp_c, f"Z_tray = {z_calib:.1f} cm", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 255, 200), 1)
+            elif phase == "swap_c2":
+                cv2.rectangle(disp_c, (8, 8), (535, 100), (80, 50, 150), -1)
+                cv2.putText(disp_c, f"SWAP TO TALL CUP ({true_height_2} cm)", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+                cv2.putText(disp_c, "Press SPACE to scan cup 2.", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 220, 255), 1)
+            elif phase == "swap_z":
+                cv2.rectangle(disp_c, (8, 8), (535, 100), (40, 40, 150), -1)
+                cv2.putText(disp_c, "MOVE NOZZLE TO DIFFERENT HEIGHT", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+                cv2.putText(disp_c, f"Wait for focus. PLACEMENT: {true_height}cm CUP. Press SPACE.", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 220, 255), 1)
+
+            if not headless:
+                cv2.imshow("ArUco + MiDaS | Cup Height Estimator", disp_c)
+                key = cv2.waitKey(1) & 0xFF
+                if key == 27: cap.release(); cv2.destroyAllWindows(); sys.exit(0)
+                if key == ord(' '):
+                    if phase == "swap_c2":
+                        phase = "warmup_c2"; calib_start = time.time()
+                    elif phase == "swap_z":
+                        phase = "warmup_c1"; calib_start = time.time()
+
+        # Fit m(Z) and c(Z)
+        deg = min(len(Z_pts)-1, 2)
+        poly_m = np.polyfit(Z_pts, m_pts, deg=deg).tolist()
+        poly_c = np.polyfit(Z_pts, c_pts, deg=deg).tolist()
+        
+        save_calibration_6p(poly_m, poly_c, Z_pts, true_height, true_height_2)
+        calib_data = {"type": 6, "poly_m": poly_m, "poly_c": poly_c}
+        print("[CALIB] ✅ Bilateral Z-Grid calibration done! Entering LIVE mode.\n")
+
+    # ── 3g. KALIBRASI UNIVERSAL ANALYTIC GEOMETRY (Type 7) ──────────────────
+    elif calibrate_mode == 7:
+        print("━" * 55)
+        print("  ⚙  UNIVERSAL ANALYTIC GEOMETRY (Type 7 - Fast & Perfect)")
+        print(f"     Cup 1 height : {true_height} cm")
+        print(f"     Cup 2 height : {true_height_2} cm")
+        print("━" * 55)
+
+        CALIB_SEC = 5.0
+        phase = "warmup_1"
+        calib_start = time.time()
+        
+        y_samples_1, y_samples_2 = [], []  # Storing Y = bbox_h * (Z - H_true)
+        last_det = 0.0
+        boxes = None
+
+        while phase != "done":
+            ret, frame = cap.read()
+            if not ret: time.sleep(0.05); continue
+            elapsed = time.time() - calib_start
+            
+            if (time.time() - last_det) > 1.0: boxes = None
+
+            aruco_results = aruco.detect(frame)
+            z_calib = 0.0
+            if aruco_results:
+                best = aruco.get_best_distance(aruco_results)
+                if best: z_calib = best["distance_cm"]
+
+            if (time.time() - last_det) > 0.1 and z_calib > 0 and phase.startswith("sample_"):
+                boxes = yolo.detect(frame)
+                last_det = time.time()
+                if boxes:
+                    x1b, y1b, x2b, y2b = boxes[0]["bbox"]
+                    bbox_h = float(y2b - y1b)
+                    if bbox_h > 5:
+                        if phase == "sample_1":
+                            # Y = bbox_h * (Z - H_true)
+                            Y = bbox_h * (z_calib - true_height)
+                            y_samples_1.append(Y)
+                        elif phase == "sample_2":
+                            Y = bbox_h * (z_calib - true_height_2)
+                            y_samples_2.append(Y)
+
+            if phase == "warmup_1" and elapsed >= 3.0:
+                phase = "sample_1"; calib_start = time.time(); elapsed = 0.0
+            elif phase == "sample_1" and len(y_samples_1) >= 30:
+                phase = "swap"; calib_start = time.time()
+            elif phase == "warmup_2" and elapsed >= 3.0:
+                phase = "sample_2"; calib_start = time.time(); elapsed = 0.0
+            elif phase == "sample_2" and len(y_samples_2) >= 30:
+                Y1_avg = float(np.median(y_samples_1))
+                Y2_avg = float(np.median(y_samples_2))
+                
+                # We have Y1 = A + B * H1
+                #         Y2 = A + B * H2
+                # B = (Y2 - Y1) / (H2 - H1)
+                dH = true_height_2 - true_height
+                if abs(dH) < 0.1:
+                    print("[CALIB] ERROR: Cups must have different heights!")
+                    return
+                B = (Y2_avg - Y1_avg) / dH
+                A = Y1_avg - B * true_height
+                
+                save_calibration_7(A, B, true_height, true_height_2)
+                calib_data = {"type": 7, "A": A, "B": B}
+                print(f"[CALIB] A = {A:.2f}, B = {B:.2f}")
+                print("[CALIB] ✅ Analytic Geometry Done! Entering LIVE mode.\n")
+                phase = "done"
+
+            disp_c = frame.copy()
+            if aruco_results: disp_c = aruco.annotate_frame(disp_c, aruco_results)
+            if boxes:
+                for b in boxes:
+                    x1b, y1b, x2b, y2b = b["bbox"]
+                    cv2.rectangle(disp_c, (x1b, y1b), (x2b, y2b), (0, 255, 80), 2)
+            cv2.rectangle(disp_c, (8, 8), (535, 100), (20, 20, 60), -1)
+
+            if phase == "warmup_1" or phase == "sample_1":
+                cv2.putText(disp_c, f"YOLO ANALYTIC: Cup 1 ({true_height}cm)", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2)
+                if phase == "sample_1":
+                    cv2.putText(disp_c, f"Sampling [{len(y_samples_1)}/30]", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 150), 1)
+            elif phase == "swap":
+                cv2.rectangle(disp_c, (8, 8), (535, 100), (80, 50, 150), -1)
+                cv2.putText(disp_c, f"SWAP TO CUP 2 ({true_height_2} cm)", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+                cv2.putText(disp_c, "Press SPACE when ready.", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 220, 255), 1)
+            elif phase == "warmup_2" or phase == "sample_2":
+                cv2.putText(disp_c, f"YOLO ANALYTIC: Cup 2 ({true_height_2}cm)", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2)
+                if phase == "sample_2":
+                    cv2.putText(disp_c, f"Sampling [{len(y_samples_2)}/30]", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 150), 1)
+
+            if not headless:
+                cv2.imshow("ArUco + MiDaS | Cup Height Estimator", disp_c)
+                key = cv2.waitKey(1) & 0xFF
+                if key == 27: cap.release(); sys.exit(0)
+                if phase == "swap" and key == ord(' '):
+                    phase = "warmup_2"; calib_start = time.time()
 
     print(f"[CAMERA] Active (index={camera_idx}) | Headless={headless}")
     
@@ -846,7 +1166,15 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
                         elif ctype == 5:
                             focal_px = aruco.camera_matrix[0, 0]
                             height_raw = calc_height_geom(z_tray_live, cup_bbox, focal_px,
-                                                          calib_data.get("K_geom", 1.0))
+                                                          calib_data.get("poly_Kgeom", [1.0]))
+                        elif ctype == 6:
+                            height_raw = calc_height_bilateral_zgrid(m_rim, m_tray, z_tray_live,
+                                                                     calib_data.get("poly_m", [0.1, 0]),
+                                                                     calib_data.get("poly_c", [0.0, 0]))
+                        elif ctype == 7:
+                            height_raw = calc_height_analytic(z_tray_live, cup_bbox,
+                                                              calib_data.get("A", 0.0),
+                                                              calib_data.get("B", 0.0))
                         else:
                             height_raw = calc_height_1point(m_rim, m_tray, z_tray_live, calib_data.get("K", 0.8))
 
@@ -1115,11 +1443,11 @@ if __name__ == "__main__":
     ap.add_argument("--camera",       type=int,   default=0,     help="Index kamera (default: 0)")
     ap.add_argument("--headless",     action="store_true",        help="Tanpa UI — mode terminal")
     ap.add_argument("--marker-size",  type=float, default=5.0,   help="Ukuran Fisik ArUco di meja (cm)")
-    ap.add_argument("--calibrate",    type=int,   default=0, choices=[0,1,2,3,4,5],
-                    help="0: Live  1: 1-Point  2: 2-Point  3: Z-Grid  4: BBox Area  5: Geometric (recommended)")
+    ap.add_argument("--calibrate",    type=int,   default=0, choices=[0,1,2,3,4,5,6,7],
+                    help="0:Live 1:1Pt 2:2Pt 3:ZGrid 4:BBox 5:Geom 6:Bilateral 7:Analytic")
     ap.add_argument("--true-height",  type=float, default=None,  help="Reference cup height in cm.")
     ap.add_argument("--true-height-2",type=float, default=None,  help="Second cup height for 2-point calibration.")
-    ap.add_argument("--n-positions",  type=int,   default=3,     help="Number of Z positions for Z-Grid calibration (type 3). Default: 3")
+    ap.add_argument("--n-positions",  type=int,   default=3,     help="Number of Z positions for Z-Grid calibration. Default: 3")
 
     args = ap.parse_args()
 
@@ -1128,9 +1456,9 @@ if __name__ == "__main__":
         if args.calibrate in (1, 3, 4, 5) and args.true_height is None:
             print(f"[ERROR] Calibration mode {args.calibrate} requires --true-height")
             sys.exit(1)
-        if args.calibrate == 2 and (args.true_height is None or args.true_height_2 is None):
-            print("[ERROR] 2-Point calibration requires --true-height AND --true-height-2")
-            print("Example: --calibrate 2 --true-height 7.6 --true-height-2 10.2")
+        if args.calibrate in (2, 6, 7) and (args.true_height is None or args.true_height_2 is None):
+            print(f"[ERROR] Calibration mode {args.calibrate} requires --true-height AND --true-height-2")
+            print("Example: --calibrate 7 --true-height 7.6 --true-height-2 11.4")
             sys.exit(1)
     else:
         calib_data = load_calibration()
