@@ -72,16 +72,18 @@ def load_calibration() -> dict:
             data = json.load(f)
         ctype = data.get("type", 1)
         labels = {
-            1: f"1-Point K-Factor  (K={data.get('K',0):.5f})",
-            2: f"2-Point Linear    (m={data.get('m',0):.5f}, c={data.get('c',0):.5f})",
-            3: f"3-Point Z-Grid    (poly_K degree={len(data.get('poly_K',[]))-1})",
-            4: f"4-BBox Area Compen (m_ref={data.get('m_ref',0):.5f})",
-            5: f"5-Geometric Proj.  (K_geom={data.get('K_geom',0):.5f})",
+            1: f"1-Point K-Factor",
+            2: f"2-Point Linear",
+            3: f"3-Point Z-Grid",
+            4: f"4-BBox Area",
+            5: f"5-Geometric Proj. (poly deg {len(data.get('poly_Kgeom',[]))-1})",
+            6: f"6-Bilateral MiDaS",
+            7: f"7-Analytic Geometry"
         }
-        print(f"[CALIB] ✅ Loaded calibration model: {labels.get(ctype, 'Unknown')}")
+        print(f"[CALIB] ✅ Loaded calibration model: {labels.get(ctype, 'Unknown')} (from {os.path.basename(CALIB_PATH)})")
         return data
     except Exception as e:
-        print(f"[CALIB] ⚠ Failed to read calibration.json: {e}")
+        print(f"[CALIB] ⚠ Failed to read calibration: {e}")
         return {}
 
 
@@ -143,16 +145,30 @@ def save_calibration_4p(m_ref: float, c_ref: float, ref_area: float, z_low: floa
 
 
 def save_calibration_5p(poly_Kgeom: list, z_grid: list, true_height: float):
-    data = {
-        "type": 5,
+    data = {"type": 5, "profiles": {}}
+    if os.path.exists(CALIB_PATH):
+        try:
+            with open(CALIB_PATH, "r") as f:
+                old_data = json.load(f)
+                if old_data.get("type") == 5 and "profiles" in old_data:
+                    data["profiles"] = old_data["profiles"]
+                elif old_data.get("type") == 5 and "poly_Kgeom" in old_data:
+                    old_h = str(old_data.get("true_height_cm", 7.6))
+                    data["profiles"][old_h] = {
+                        "poly_Kgeom": old_data["poly_Kgeom"],
+                        "z_grid_points": old_data.get("z_grid_points", []),
+                        "calibrated_at": old_data.get("calibrated_at", "")
+                    }
+        except Exception: pass
+
+    data["profiles"][str(true_height)] = {
         "poly_Kgeom": poly_Kgeom,
         "z_grid_points": z_grid,
-        "true_height_cm": true_height,
         "calibrated_at": datetime.now().isoformat()
     }
     with open(CALIB_PATH, "w") as f:
         json.dump(data, f, indent=2)
-    print(f"[CALIB] 💾 Saved Geometric Z-Grid (type 5) → {CALIB_PATH}")
+    print(f"[CALIB] 💾 Saved Geometric Z-Grid (type 5) for Menu [{true_height}cm] → {CALIB_PATH}")
 
 
 def save_calibration_6p(poly_m: list, poly_c: list, z_grid: list, h1: float, h2: float):
@@ -1089,6 +1105,27 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
                     phase = "warmup_2"; calib_start = time.time()
 
     print(f"[CAMERA] Active (index={camera_idx}) | Headless={headless}")
+
+    active_poly_Kgeom = [1.0]
+    active_cup_str = "LEGACY (1 Profile)"
+    if calib_data.get("type") == 5:
+        if "profiles" in calib_data:
+            if getattr(args, "target_cup", None):
+                target_str = str(args.target_cup)
+                if target_str in calib_data["profiles"]:
+                    active_poly_Kgeom = calib_data["profiles"][target_str]["poly_Kgeom"]
+                    active_cup_str = target_str
+                else:
+                    print(f"[WARN] Target cup Menu '{target_str}' not found! Loading first profile.")
+                    keys = list(calib_data["profiles"].keys())
+                    active_cup_str = keys[0] if keys else "Unknown"
+                    active_poly_Kgeom = calib_data["profiles"][active_cup_str].get("poly_Kgeom", [1.0]) if keys else [1.0]
+            else:
+                keys = list(calib_data["profiles"].keys())
+                active_cup_str = keys[0] if keys else "Unknown"
+                active_poly_Kgeom = calib_data["profiles"][active_cup_str].get("poly_Kgeom", [1.0]) if keys else [1.0]
+        else:
+            active_poly_Kgeom = calib_data.get("poly_Kgeom", [1.0])
     
     # ── 3b. State Asynchronous Pipeline (Live Mode) ────────────────────────
     MIDAS_FPS_LIMIT = 5.0
@@ -1165,8 +1202,7 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
                                                           calib_data.get("ref_bbox_area_px", 10000.0))
                         elif ctype == 5:
                             focal_px = aruco.camera_matrix[0, 0]
-                            height_raw = calc_height_geom(z_tray_live, cup_bbox, focal_px,
-                                                          calib_data.get("poly_Kgeom", [1.0]))
+                            height_raw = calc_height_geom(z_tray_live, cup_bbox, focal_px, active_poly_Kgeom)
                         elif ctype == 6:
                             height_raw = calc_height_bilateral_zgrid(m_rim, m_tray, z_tray_live,
                                                                      calib_data.get("poly_m", [0.1, 0]),
@@ -1248,6 +1284,9 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
             cv2.rectangle(disp, (0, h_frame - 26), (w_frame, h_frame), (15, 15, 15), -1)
             bar_txt = f"ArUco: {'OK' if z_tray_live else 'X'} | YOLO: {'OK' if cup_bbox else 'X'} | [R] Record  [S] Screen  [Q] Quit"
             cv2.putText(disp, bar_txt, (10, h_frame - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (130, 200, 130), 1)
+
+            if getattr(calib_data, "get", lambda x: 0)("type") == 5 or (isinstance(calib_data, dict) and calib_data.get("type") == 5):
+                cv2.putText(disp, f"TARGET MENU: {active_cup_str} cm", (18, 105), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
 
             if not headless:
                 cv2.imshow("ArUco + MiDaS | Cup Height Estimator", disp)
@@ -1447,9 +1486,14 @@ if __name__ == "__main__":
                     help="0:Live 1:1Pt 2:2Pt 3:ZGrid 4:BBox 5:Geom 6:Bilateral 7:Analytic")
     ap.add_argument("--true-height",  type=float, default=None,  help="Reference cup height in cm.")
     ap.add_argument("--true-height-2",type=float, default=None,  help="Second cup height for 2-point calibration.")
+    ap.add_argument("--target-cup",   type=float, default=None,  help="LIVE MODE: specify the target menu cup height to monitor (e.g. 7.6 or 11.4)")
     ap.add_argument("--n-positions",  type=int,   default=3,     help="Number of Z positions for Z-Grid calibration. Default: 3")
+    ap.add_argument("--cup-profile",  type=str,   default="default", help="Nama profil gelas (misal: short, tall) untuk membedakan file kalibrasi.")
 
     args = ap.parse_args()
+
+    if args.cup_profile != "default":
+        CALIB_PATH = os.path.join(CALIB_DIR, f"calibration_{args.cup_profile}.json")
 
     calib_data = {}
     if args.calibrate > 0:
