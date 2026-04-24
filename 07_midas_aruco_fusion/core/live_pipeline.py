@@ -1,0 +1,232 @@
+import time
+import cv2
+import numpy as np
+import core.height_math as hm
+import core.session_reporter as sr
+import os
+from datetime import datetime
+
+def run_live_pipeline(get_frame, cap, aruco, yolo, midas, headless, calib_data, marker_size, active_poly_Kgeom, active_cup_str, args, SCREENSHOT_DIR, VIDEO_DIR):
+    MIDAS_FPS_LIMIT = 5.0
+    midas_interval  = 1.0 / MIDAS_FPS_LIMIT
+    last_midas_t    = 0.0
+
+    z_tray_live:    float       = 0.0
+    aruco_roi:      tuple | None = None
+    cup_bboxes: list = []
+    cup_heights_ema: list = [None, None]
+    last_depth_norm = None
+    EMA_ALPHA = 0.35
+
+    is_recording = False
+    video_writer = None
+    screenshot_paths = []
+
+    stats_total_frames = 0
+    stats_midas_runs = 0
+
+    history_z_tray = []
+    history_cup_h = {0: [], 1: []}
+    history_frames = []
+
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                time.sleep(0.1)
+                continue
+
+            now = time.time()
+            stats_total_frames += 1
+            h_frame, w_frame = frame.shape[:2]
+
+            aruco_results = aruco.detect(frame)
+            if aruco_results:
+                best = aruco.get_best_distance(aruco_results)
+                if best:
+                    z_tray_live = best["distance_cm"]
+                    corners = aruco_results[0].get("corners")
+                    if corners is not None:
+                        pts  = np.array(corners, dtype=np.float32)
+                        x1, y1 = np.min(pts, axis=0).astype(int)
+                        x2, y2 = np.max(pts, axis=0).astype(int)
+                        pad_x  = max(2, (x2 - x1) // 10)
+                        pad_y  = max(2, (y2 - y1) // 10)
+                        aruco_roi = (x1 + pad_x, y1 + pad_y, x2 - pad_x, y2 - pad_y)
+
+            if (now - last_midas_t) >= midas_interval and z_tray_live > 0 and aruco_roi:
+                boxes = yolo.detect(frame)
+                if boxes:
+                    # Sort left-to-right to keep cup ordering consistent
+                    boxes = sorted(boxes, key=lambda b: b["bbox"][0])
+                    boxes = boxes[:2]
+                    cup_bboxes = [b["bbox"] for b in boxes]
+                    
+                    depth_map  = midas.process(frame)
+                    stats_midas_runs += 1
+
+                    depth_norm = cv2.normalize(depth_map, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                    last_depth_norm = depth_norm
+                    m_tray = midas.get_tray_depth(depth_map, aruco_roi)
+
+                    if m_tray > 0:
+                        ctype = calib_data.get("type", 1)
+                        for i in range(2):
+                            if i < len(cup_bboxes):
+                                bbox = cup_bboxes[i]
+                                m_rim = midas.get_rim_depth(depth_map, bbox)
+                                if m_rim > 0:
+                                    if ctype == 2:
+                                        height_raw = hm.calc_height_2point(m_rim, m_tray, z_tray_live, calib_data.get("m", 0.1), calib_data.get("c", 0.0))
+                                    elif ctype == 3:
+                                        height_raw = hm.calc_height_zgrid(m_rim, m_tray, z_tray_live, calib_data.get("poly_K", [0.8]))
+                                    elif ctype == 4:
+                                        height_raw = hm.calc_height_bbox(m_rim, m_tray, z_tray_live, bbox, calib_data.get("m_ref", 0.15), calib_data.get("c_ref", 0.0), calib_data.get("ref_bbox_area_px", 10000.0))
+                                    elif ctype == 5:
+                                        focal_px = aruco.camera_matrix[0, 0]
+                                        height_raw = hm.calc_height_geom(z_tray_live, bbox, focal_px, active_poly_Kgeom)
+                                    elif ctype == 6:
+                                        height_raw = hm.calc_height_bilateral_zgrid(m_rim, m_tray, z_tray_live, calib_data.get("poly_m", [0.1, 0]), calib_data.get("poly_c", [0.0, 0]))
+                                    elif ctype == 7:
+                                        height_raw = hm.calc_height_analytic(z_tray_live, bbox, calib_data.get("A", 0.0), calib_data.get("B", 0.0))
+                                    else:
+                                        height_raw = hm.calc_height_1point(m_rim, m_tray, z_tray_live, calib_data.get("K", 0.8))
+
+                                    if height_raw > 0:
+                                        if cup_heights_ema[i] is None:
+                                            cup_heights_ema[i] = height_raw
+                                        else:
+                                            cup_heights_ema[i] = (EMA_ALPHA * height_raw) + ((1.0 - EMA_ALPHA) * cup_heights_ema[i])
+                                        history_cup_h[i].append(cup_heights_ema[i])
+                                    else:
+                                        history_cup_h[i].append(0.0)
+                                else:
+                                    cup_heights_ema[i] = None
+                                    history_cup_h[i].append(0.0)
+                            else:
+                                cup_heights_ema[i] = None
+                                history_cup_h[i].append(0.0)
+
+                        history_z_tray.append(z_tray_live)
+                        history_frames.append(stats_total_frames)
+
+                else:
+                    cup_bboxes = []
+                    for i in range(2):
+                        cup_heights_ema[i] = None
+                        history_cup_h[i].append(0.0)
+                    history_z_tray.append(z_tray_live)
+                    history_frames.append(stats_total_frames)
+
+                last_midas_t = now
+
+            disp = frame.copy()
+            if aruco_results:
+                disp = aruco.annotate_frame(disp, aruco_results)
+            if aruco_roi:
+                cv2.rectangle(disp, aruco_roi[:2], aruco_roi[2:], (255, 140, 0), 1)
+            for bbox in cup_bboxes:
+                x1c, y1c, x2c, y2c = bbox
+                cv2.rectangle(disp, (x1c, y1c), (x2c, y2c), (0, 255, 80), 2)
+
+            cv2.rectangle(disp, (8, 8), (420, 130), (25, 25, 25), -1)
+            cv2.rectangle(disp, (8, 8), (420, 130), (90, 90, 90), 1)
+
+            if last_depth_norm is not None:
+                depth_color = cv2.applyColorMap(last_depth_norm, cv2.COLORMAP_JET)
+                pip_h, pip_w = int(h_frame / 3.0), int(w_frame / 3.0)
+                depth_resized = cv2.resize(depth_color, (pip_w, pip_h))
+                pip_y1 = h_frame - pip_h - 26
+                pip_y2 = h_frame - 26
+                pip_x1 = w_frame - pip_w - 5
+                pip_x2 = w_frame - 5
+                disp[pip_y1:pip_y2, pip_x1:pip_x2] = depth_resized
+                cv2.rectangle(disp, (pip_x1, pip_y1), (pip_x2, pip_y2), (200, 200, 200), 2)
+                cv2.putText(disp, "MiDaS Depth", (pip_x1 + 6, pip_y1 + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+
+            cv2.putText(disp, "CUP HEIGHTS", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (170, 170, 170), 1)
+            cv2.putText(disp, f"Z_tray: {z_tray_live:.1f} cm", (210, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 160, 60), 1)
+            
+            base_y = 65
+            for i in range(2):
+                h_val = cup_heights_ema[i]
+                y_pos = base_y + (i * 38)
+                lbl = f"CUP {i+1}:"
+                if h_val and h_val > 0:
+                    cv2.putText(disp, lbl, (18, y_pos-8), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+                    cv2.putText(disp, f"{h_val:.1f} cm", (85, y_pos+2), cv2.FONT_HERSHEY_DUPLEX, 1.2, (0, 255, 100), 2)
+                    z_rim_val = max(0.0, z_tray_live - h_val)
+                    cv2.putText(disp, f"Z_rim: {z_rim_val:.1f} cm", (250, y_pos-2), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 255, 100), 1)
+                else:
+                    cv2.putText(disp, lbl, (18, y_pos-8), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (100, 100, 100), 1)
+                    cv2.putText(disp, "-- cm", (85, y_pos+2), cv2.FONT_HERSHEY_DUPLEX, 1.2, (70, 70, 70), 2)
+                    cv2.putText(disp, f"Z_rim: -- cm", (250, y_pos-2), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 100, 100), 1)
+
+            if is_recording:
+                if int(time.time() * 2) % 2 == 0:
+                    cv2.circle(disp, (w_frame - 65, 25), 6, (0, 0, 255), -1)
+                    cv2.putText(disp, "REC", (w_frame - 50, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                if video_writer is not None:
+                    video_writer.write(disp)
+
+            cv2.rectangle(disp, (0, h_frame - 26), (w_frame, h_frame), (15, 15, 15), -1)
+            bar_txt = f"ArUco: {'OK' if z_tray_live else 'X'} | YOLO: {'OK' if cup_bboxes else 'X'} | [R] Record  [S] Screen  [Q] Quit"
+
+            cv2.putText(disp, bar_txt, (10, h_frame - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (130, 200, 130), 1)
+
+            if getattr(calib_data, "get", lambda x: 0)("type") == 5 or (isinstance(calib_data, dict) and calib_data.get("type") == 5):
+                cv2.putText(disp, f"TARGET MENU: {active_cup_str} cm", (18, 105), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
+
+            if not headless:
+                cv2.imshow("ArUco + MiDaS | Cup Height Estimator", disp)
+                key = cv2.waitKey(1) & 0xFF
+                if key in (27, ord('q')):
+                    break
+                elif key == ord('s'):
+                    ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+                    ss_path = os.path.join(SCREENSHOT_DIR, f"fusion_{ts}.jpg")
+                    cv2.imwrite(ss_path, disp)
+                    screenshot_paths.append(ss_path)
+                    print(f"[SHOT] Screenshot tersimpan: {ss_path}")
+                elif key == ord('r'):
+                    if not is_recording:
+                        ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+                        vid_path = os.path.join(VIDEO_DIR, f"fusion_{ts}.mp4")
+                        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                        fps_cap = cap.get(cv2.CAP_PROP_FPS) or 30.0
+                        video_writer = cv2.VideoWriter(vid_path, fourcc, fps_cap, (w_frame, h_frame))
+                        is_recording = True
+                        print(f"🔴 [REC] Mulai merekam video: {vid_path}")
+                    else:
+                        is_recording = False
+                        if video_writer: video_writer.release()
+                        video_writer = None
+                        print("⏹ [REC] Merekam dihentikan.")
+            else:
+                if (now - last_midas_t) < 0.05:
+                    h1 = cup_heights_ema[0]
+                    h2 = cup_heights_ema[1]
+                    s1 = f"C1:{h1:.2f}cm" if h1 and h1 > 0 else "C1:--"
+                    s2 = f"C2:{h2:.2f}cm" if h2 and h2 > 0 else "C2:--"
+                    print(f"[DATA] z_tray={z_tray_live:.2f}cm | {s1} | {s2}")
+
+
+    except KeyboardInterrupt:
+        print("\n[INFO] Execution stopped by user (Ctrl+C).")
+    finally:
+            if video_writer: video_writer.release()
+            cap.release()
+            if not headless: cv2.destroyAllWindows()
+
+            print("\n[DONE] Pipeline closed. Generating Final Report...")
+            sr._generate_session_report(
+                calib_data=calib_data,
+                marker_size_cm=marker_size,
+                focal_len=aruco.camera_matrix[0,0],
+                total_frames=stats_total_frames,
+                midas_runs=stats_midas_runs,
+                history_z_tray=history_z_tray,
+                history_cup_h=history_cup_h,
+                history_frames=history_frames,
+                screenshots=screenshot_paths
+            )
