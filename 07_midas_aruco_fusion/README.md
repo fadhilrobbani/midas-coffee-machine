@@ -13,15 +13,16 @@ conda activate midas-aruco-env
 
 Sistem dirancang untuk beroperasi di pabrik dalam 3 fase utama:
 
-### 1. Kalibrasi Lensa Fisheye (Khusus Kamera Baru / Sekali Saja)
-Jika memakai kamera wide-angle/Fisheye, jarak yang terbaca akan mengerut dan jauh. Gunakan *auto-focal checkerboard* ini untuk mengukur *focal length* aslinya serta membuang kurva cembungnya:
+### 1. Kalibrasi Lensa Fisheye (Khusus Kamera Fisheye / Via Moildev)
+Jika memakai kamera fisheye berekstensi lebar seperti **LRCP + IMX586**, distorsi barrel dikoreksi secara real-time menggunakan library **Moildev** dengan database parameter `camera_parameters.json`.
 
 ```bash
-python calibrate_fisheye.py --camera 0
+# Tidak perlu kalibrasi manual! Profil sudah tersedia di camera_parameters.json.
+# Cukup jalankan langsung dengan --fisheye dan nama profil yang sesuai:
+python run_fusion.py --fisheye --moil-camera-name lrcp_imx586_240_17 --calibrate 5 --true-height 7.6
 ```
-- Arahkan kamera ke gambar papan catur (*Checkerboard*).
-- Tekan secara berulang tombol **`SPASI`** tiap kali sudut kedeteksi (idealnya 10-15 pose yang berbeda).
-- Tekan **`C`** untuk memproses. Parameter kamera akan tersimpan kuat di berkas `focal_length_calibration.yaml`. 
+
+> **Catatan**: Untuk kamera biasa (tanpa fisheye), **hapus flag `--fisheye`**. Moildev tidak aktif dan pipeline berjalan seperti biasa.
 
 ### 2. Pendaftaran Profil Mangkuk (Kalibrasi Mode 5)
 Latih program di mana posisi aman gelas berukuran tertentu (misal: menu gelas `7.6` cm). Program akan merekam persentase *clipping* kedalaman secara otomatis (*PolyFit*).
@@ -55,7 +56,12 @@ python run_fusion.py --camera 0 --fisheye --target-cup 7.6
 | `--true-height` | `None` | (Kalibrasi) Masukkan tinggi fisik gelas aslinya |
 | `--target-cup` | `None` | (Produksi Live) Ukuran referensi *Cup* mana yang ditarik |
 | `--cup-profile` | `default` | Nama profil simpanan (misal `--cup-profile mesinB`) |
-| `--fisheye` | `False` | Tarik `focal_length_calibration.yaml` untuk meratakan gambar |
+| `--fisheye` | `False` | Aktifkan mode Moildev fisheye undistortion |
+| `--moil-camera-name` | `lrcp_imx586_240_17` | Nama profil di `camera_parameters.json` |
+| `--moil-pitch` | `-90.0` | Anypoint pitch (°) — default kamera menghadap ke bawah |
+| `--moil-yaw` | `0.0` | Anypoint yaw (°) |
+| `--moil-roll` | `0.0` | Anypoint roll (°) |
+| `--moil-zoom` | `2.0` | Zoom factor anypoint Moildev |
 | `--n-positions` | `3` | Hitungan fase titik berhenti (*Z-Grid*) yang harus dipelajari |
 | `--headless` | `False` | Sembunyikan *Window* saat mesin ditanam di `Kakip RZ/V2H` |
 

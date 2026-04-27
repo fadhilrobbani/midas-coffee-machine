@@ -22,6 +22,7 @@ from datetime import datetime
 import core.calibration_storage as cs
 import core.height_math as hm
 import core.session_reporter as sr
+from core.moil_undistorter import MoilUndistorter
 
 import cv2
 import numpy as np
@@ -79,9 +80,11 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
     print("[INIT] Loading ArucoDetector...")
     aruco = ArucoDetector(marker_size_cm=marker_size)
     print("[INIT] Loading YoloDetector...")
-    yolo  = YoloDetector()
+    yolo_weights = os.path.join(ROOT_DIR, "weights", "cup_detection_v3_12_s_best.pt")
+    yolo  = YoloDetector(weights_path=yolo_weights)
     print("[INIT] Loading MidasDepthEstimator (this may take a while)...")
-    midas = MidasDepthEstimator()
+    midas_weights = os.path.join(ROOT_DIR, "weights", "midas_v21_small_256.pt")
+    midas = MidasDepthEstimator(weights_path=midas_weights)
     print("[INIT] ✅ All detectors ready.\n")
 
     cap = cv2.VideoCapture(camera_idx)
@@ -102,34 +105,44 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
         cap.release()
         return
 
-    fisheye_map1 = None
-    fisheye_map2 = None
+    # ── Inisiasi Moildev undistorter (hanya jika --fisheye aktif) ─────────────
+    moil_undistorter = None
     if getattr(args, "fisheye", False):
         try:
-            import yaml
-            params_path = os.path.join(os.path.dirname(__file__), "focal_length_calibration.yaml")
-            with open(params_path, "r") as f:
-                f_cal = yaml.safe_load(f)
-            K = np.array(f_cal["camera_matrix"])
-            D = np.array(f_cal["dist_coeffs"])
-            
+            json_path    = os.path.join(_THIS_DIR, "camera_parameters.json")
+            camera_name  = getattr(args, "moil_camera_name", "lrcp_imx586_240_17")
+            moil_pitch   = float(getattr(args, "moil_pitch", -90.0))
+            moil_yaw     = float(getattr(args, "moil_yaw",    0.0))
+            moil_roll    = float(getattr(args, "moil_roll",    0.0))
+            moil_zoom    = float(getattr(args, "moil_zoom",    2.0))
+
+            moil_undistorter = MoilUndistorter(
+                json_path    = json_path,
+                camera_name  = camera_name,
+                pitch        = moil_pitch,
+                yaw          = moil_yaw,
+                roll         = moil_roll,
+                zoom         = moil_zoom,
+                use_opencl   = True,
+            )
+
+            # Override camera matrix ArUco dengan focal length Moildev
             h, w = tmp_frame.shape[:2]
-            if f_cal.get("is_fisheye_model"):
-                new_K = cv2.fisheye.estimateNewCameraMatrixForUndistortRectify(K, D, (w,h), np.eye(3), balance=1.0)
-                fisheye_map1, fisheye_map2 = cv2.fisheye.initUndistortRectifyMap(K, D, np.eye(3), new_K, (w,h), cv2.CV_16SC2)
-            else:
-                new_K, roi = cv2.getOptimalNewCameraMatrix(K, D, (w,h), 1, (w,h))
-                fisheye_map1, fisheye_map2 = cv2.initUndistortRectifyMap(K, D, None, new_K, (w,h), cv2.CV_16SC2)
-            
+            new_K = moil_undistorter.build_aruco_camera_matrix(w, h)
             aruco.camera_matrix = new_K
-            print(f"[FISHEYE] Loaded camera params: fx={new_K[0,0]:.1f}, fy={new_K[1,1]:.1f}")
+            print(f"[MOIL] ArUco camera matrix overridden: "
+                  f"fx={new_K[0,0]:.1f}, fy={new_K[1,1]:.1f}, "
+                  f"cx={new_K[0,2]:.1f}, cy={new_K[1,2]:.1f}")
+
         except Exception as e:
-            print(f"[FISHEYE ERROR] {e}. Did you run calibrate_fisheye.py first?")
+            print(f"[MOIL ERROR] Gagal inisiasi MoilUndistorter: {e}")
+            print("[MOIL] Melanjutkan tanpa fisheye undistortion.")
+            moil_undistorter = None
 
     def get_frame():
         r, f = cap.read()
-        if r and fisheye_map1 is not None and fisheye_map2 is not None:
-            f = cv2.remap(f, fisheye_map1, fisheye_map2, interpolation=cv2.INTER_LINEAR)
+        if r and moil_undistorter is not None:
+            f = moil_undistorter.undistort(f)
         return r, f
 
 
@@ -192,7 +205,18 @@ if __name__ == "__main__":
     ap.add_argument("--target-cup",   type=float, default=None,  help="LIVE MODE: specify the target menu cup height to monitor (e.g. 7.6 or 11.4)")
     ap.add_argument("--n-positions",  type=int,   default=3,     help="Number of Z positions for Z-Grid calibration. Default: 3")
     ap.add_argument("--cup-profile",  type=str,   default="default", help="Nama profil gelas (misal: short, tall) untuk membedakan file kalibrasi.")
-    ap.add_argument("--fisheye",      action="store_true", help="Enable fisheye undistortion menggunakan focal_length_calibration.yaml")
+    ap.add_argument("--fisheye",           action="store_true",
+                    help="Enable fisheye undistortion via Moildev (gunakan bersama --moil-camera-name)")
+    ap.add_argument("--moil-camera-name",  type=str,   default="lrcp_imx586_240_17",
+                    help="Nama profil kamera di camera_parameters.json (default: lrcp_imx586_240_17)")
+    ap.add_argument("--moil-pitch",        type=float, default=0.0,
+                    help="Anypoint pitch dalam derajat (default: 0.0, kamera menatap lurus)")
+    ap.add_argument("--moil-yaw",          type=float, default=0.0,
+                    help="Anypoint yaw dalam derajat (default: 0)")
+    ap.add_argument("--moil-roll",         type=float, default=0.0,
+                    help="Anypoint roll dalam derajat (default: 0)")
+    ap.add_argument("--moil-zoom",         type=float, default=2.0,
+                    help="Zoom factor anypoint Moildev (default: 2.0)")
 
     args = ap.parse_args()
 
