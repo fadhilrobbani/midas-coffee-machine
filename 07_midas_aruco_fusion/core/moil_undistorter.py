@@ -52,7 +52,7 @@ class MoilUndistorter:
     camera_name : str
         Nama profil kamera di dalam JSON (contoh: 'lrcp_imx586_240_17').
     pitch : float
-        Rotasi pitch dalam derajat (default -90 = kamera menghadap ke bawah).
+        Rotasi pitch dalam derajat (default 0 = lurus ke tengah lensa).
     yaw : float
         Rotasi yaw dalam derajat (default 0).
     roll : float
@@ -61,6 +61,10 @@ class MoilUndistorter:
         Faktor zoom anypoint (default 2).
     use_opencl : bool
         Aktifkan akselerasi OpenCL jika tersedia (default True).
+    frame_width : int
+        Lebar resolusi stream aktual (default 640). Maps di-rescale ke ukuran ini.
+    frame_height : int
+        Tinggi resolusi stream aktual (default 480). Maps di-rescale ke ukuran ini.
     target_size : tuple | None
         Resize output ke (width, height) setelah remap. None = tidak diubah.
 
@@ -82,14 +86,18 @@ class MoilUndistorter:
         roll: float = 0.0,
         zoom: float = 2.0,
         use_opencl: bool = True,
+        frame_width: int = 640,
+        frame_height: int = 480,
         target_size: tuple = None,
     ):
-        self.camera_name  = camera_name
-        self.pitch        = pitch
-        self.yaw          = yaw
-        self.roll         = roll
-        self.zoom         = zoom
-        self.target_size  = target_size
+        self.camera_name   = camera_name
+        self.pitch         = pitch
+        self.yaw           = yaw
+        self.roll          = roll
+        self.zoom          = zoom
+        self.frame_width   = frame_width
+        self.frame_height  = frame_height
+        self.target_size   = target_size
         self.opencl_active = False
 
         # ── Validasi json_path ──────────────────────────────────────────────
@@ -112,23 +120,48 @@ class MoilUndistorter:
                 f"Beberapa profil yang tersedia: {available} ..."
             )
 
-        # ── Simpan parameter5 untuk estimasi focal length ──────────────────
+        # ── Ekstraksi Parameter Kamera ──────────────────────────────────────
         cam_entry = _params[camera_name]
+        
+        # Simpan metadata asli sensor (untuk perhitungan focal length)
         self._parameter5   = float(cam_entry.get("parameter5", 0.0))
         self._calibRatio   = float(cam_entry.get("calibrationRatio", 1.0))
-        self._image_width  = int(cam_entry.get("imageWidth", 0))
-        self._image_height = int(cam_entry.get("imageHeight", 0))
+        self._image_width  = int(cam_entry.get("imageWidth", 8000))
+        self._image_height = int(cam_entry.get("imageHeight", 6000))
 
-        # ── Instansiasi Moildev (perlu json_path + camera_name) ────────────
-        print(f"[MOIL] Init Moildev: camera='{camera_name}', "
-              f"pitch={pitch}, yaw={yaw}, roll={roll}, zoom={zoom}")
-        self._moil = _MoildevLib(json_path, camera_name)
+        # Hitung skala antara sensor asli dan resolusi stream aktual
+        scale_x = frame_width  / max(self._image_width,  1)
+        scale_y = frame_height / max(self._image_height, 1)
+        avg_scale = (scale_x + scale_y) / 2.0
 
-        # ── Generate maps_anypoint_mode2 (sekali saja) ─────────────────────
-        map_x_np, map_y_np = self._moil.maps_anypoint_mode2(
-            pitch, yaw, roll, zoom
+        # ── Instansiasi Moildev Natively (Scaled) ───────────────────────────
+        # DARIPADA: generate maps 8000x6000 lalu resize ke 640x480 (blur).
+        # SEBAIKNYA: inisiasi Moildev dengan parameter yang sudah di-scale.
+        # Maps akan langsung keluar di resolusi stream tanpa interpolation kedua.
+        
+        print(f"[MOIL] Native Init: {frame_width}x{frame_height} (scaled from {self._image_width}x{self._image_height})")
+        
+        self._moil = _MoildevLib(
+            camera_name      = camera_name,
+            camera_fov       = float(cam_entry.get("cameraFov", 220)),
+            sensor_width     = float(cam_entry.get("cameraSensorWidth", 1.0)),
+            sensor_height    = float(cam_entry.get("cameraSensorHeight", 1.0)),
+            icx              = float(cam_entry.get("iCx", 4000)) * scale_x,
+            icy              = float(cam_entry.get("iCy", 3000)) * scale_y,
+            ratio            = float(cam_entry.get("ratio", 1.0)),
+            image_width      = frame_width,
+            image_height     = frame_height,
+            calibration_ratio = float(cam_entry.get("calibrationRatio", 1.0)) * avg_scale,
+            parameter_0      = float(cam_entry.get("parameter0", 0.0)),
+            parameter_1      = float(cam_entry.get("parameter1", 0.0)),
+            parameter_2      = float(cam_entry.get("parameter2", 0.0)),
+            parameter_3      = float(cam_entry.get("parameter3", 0.0)),
+            parameter_4      = float(cam_entry.get("parameter4", 0.0)),
+            parameter_5      = float(cam_entry.get("parameter5", 0.0)),
         )
-        # Pastikan float32 untuk cv2.remap
+
+        # Generate maps langsung di resolusi stream
+        map_x_np, map_y_np = self._moil.maps_anypoint_mode2(pitch, yaw, roll, zoom)
         self._map_x_cpu = map_x_np.astype(np.float32)
         self._map_y_cpu = map_y_np.astype(np.float32)
 
@@ -172,6 +205,37 @@ class MoilUndistorter:
 
     # ── Method Utama ────────────────────────────────────────────────────────
 
+    def update_maps(
+        self,
+        pitch: float = None,
+        yaw: float = None,
+        roll: float = None,
+        zoom: float = None,
+    ) -> None:
+        """
+        Regenerasi remap maps secara real-time dengan parameter baru.
+        Dipanggil oleh AnypointController saat user drag mouse.
+
+        Parameters yang None akan menggunakan nilai saat ini.
+        """
+        if pitch is not None: self.pitch = max(-110.0, min(110.0, pitch))
+        if yaw   is not None: self.yaw   = max(-110.0, min(110.0, yaw))
+        if roll  is not None: self.roll  = max(-110.0, min(110.0, roll))
+        if zoom  is not None: self.zoom  = max(1.0,   min(20.0,  zoom))
+
+        # Generate maps (sudah native resolusi stream karena init scaled)
+        map_x_np, map_y_np = self._moil.maps_anypoint_mode2(
+            self.pitch, self.yaw, self.roll, self.zoom
+        )
+        self._map_x_cpu = map_x_np.astype(np.float32)
+        self._map_y_cpu = map_y_np.astype(np.float32)
+        if self.opencl_active:
+            self._map_x = cv2.UMat(self._map_x_cpu)
+            self._map_y = cv2.UMat(self._map_y_cpu)
+        else:
+            self._map_x = self._map_x_cpu
+            self._map_y = self._map_y_cpu
+
     def undistort(self, frame: np.ndarray) -> np.ndarray:
         """
         Terapkan koreksi Moildev anypoint pada satu frame.
@@ -199,7 +263,7 @@ class MoilUndistorter:
             frame_in,
             self._map_x,
             self._map_y,
-            interpolation=cv2.INTER_LINEAR,
+            interpolation=cv2.INTER_CUBIC, # Lebih tajam dari LINEAR
             borderMode=cv2.BORDER_CONSTANT,
             borderValue=0,
         )

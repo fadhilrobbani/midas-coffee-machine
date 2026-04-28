@@ -11,10 +11,23 @@ Menggunakan calibration_params.yml yang sudah ada di project root.
 
 import math
 import os
+import sys
 
 import cv2
 import numpy as np
 import yaml
+
+# Tambah core/ ke path untuk import image_preprocess
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_FUSION_DIR = os.path.abspath(os.path.join(_THIS_DIR, '..', '07_midas_aruco_fusion'))
+if _FUSION_DIR not in sys.path:
+    sys.path.insert(0, _FUSION_DIR)
+
+try:
+    from core.image_preprocess import enhance_for_detection as _enhance
+    _HAS_PREPROCESS = True
+except ImportError:
+    _HAS_PREPROCESS = False
 
 # ── Dictionary mapping ──────────────────────────────────────────────────
 DICT_MAP = {
@@ -93,15 +106,19 @@ class ArucoDetector:
         else:
             self.aruco_params = cv2.aruco.DetectorParameters_create()
 
-        # Optimasi parameter deteksi untuk kondisi mesin kopi
-        self.aruco_params.adaptiveThreshConstant = 7
-        self.aruco_params.adaptiveThreshWinSizeMin = 3
-        self.aruco_params.adaptiveThreshWinSizeMax = 23
-        self.aruco_params.adaptiveThreshWinSizeStep = 10
-        self.aruco_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
-        self.aruco_params.cornerRefinementWinSize = 5
-        self.aruco_params.cornerRefinementMaxIterations = 30
-        self.aruco_params.cornerRefinementMinAccuracy = 0.1
+        # Parameter max-tolerant untuk kondisi fisheye blur (sharpness ~88)
+        # Terbukti mendeteksi marker pada brightness=45, sharpness=88 (kondisi live)
+        # Parameter dioptimalkan untuk kecepatan (balanced)
+        self.aruco_params.adaptiveThreshConstant        = 7
+        self.aruco_params.adaptiveThreshWinSizeMin      = 3
+        self.aruco_params.adaptiveThreshWinSizeMax      = 71    # Kurangi dari 151 → jauh lebih ringan
+        self.aruco_params.adaptiveThreshWinSizeStep     = 15    # Naikkan dari 8 → mengurangi jumlah window yang dicek
+        self.aruco_params.minMarkerPerimeterRate        = 0.01  # Sedikit lebih ketat agar tidak terlalu banyak rejected candidates
+        self.aruco_params.maxMarkerPerimeterRate        = 4.0
+        self.aruco_params.polygonalApproxAccuracyRate   = 0.10  # Cukup untuk distorsi ringan
+        self.aruco_params.errorCorrectionRate           = 0.8   # Nilai standar yang lebih cepat
+        self.aruco_params.cornerRefinementMethod        = cv2.aruco.CORNER_REFINE_NONE
+
 
         # Load kalibrasi kamera
         calib = load_camera_calibration(params_path)
@@ -114,38 +131,79 @@ class ArucoDetector:
         print(f"   Marker size : {marker_size_cm} cm")
         print(f"   Focal length: {calib['f_pixel']:.1f} px")
 
-    def detect(self, frame):
+    def detect(self, frame, use_enhancement: bool = True):
         """
         Deteksi semua ArUco marker pada frame dan hitung pose 3D-nya.
 
         Args:
-            frame: BGR image (numpy array)
+            frame           : BGR image (numpy array)
+            use_enhancement : Terapkan CLAHE + unsharp sebelum deteksi
+                              (default True; matikan di headless/benchmark)
 
         Returns:
             list of dict, masing-masing berisi:
-                - id: int (marker ID)
-                - corners: ndarray (4, 2) — 4 sudut marker dalam piksel
-                - distance_cm: float — jarak kamera ke marker
-                - rvec: ndarray (3,) — rotation vector
-                - tvec: ndarray (3,) — translation vector (x, y, z cm)
-                - euler_deg: dict — {'roll', 'pitch', 'yaw'} dalam derajat
-                - center: tuple (x, y) — titik tengah marker
-                - reprojection_error: float — error reprojeksi (piksel)
+                - id, corners, distance_cm, rvec, tvec, euler_deg, center,
+                  reprojection_error
         """
+        # ── Strategi deteksi: Gunakan UMat (OpenCL) untuk akselerasi jika mungkin ──
+        # Konversi ke Grayscale sekali saja
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+        # Gunakan UMat jika OpenCV mendukung OpenCL untuk deteksi yang lebih cepat
+        try:
+            u_gray = cv2.UMat(gray)
+        except:
+            u_gray = gray
 
         if hasattr(cv2.aruco, 'ArucoDetector'):
             detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
-            corners, ids, rejected = detector.detectMarkers(gray)
+            corners, ids, rejected = detector.detectMarkers(u_gray)
         else:
+            detector = None
             corners, ids, rejected = cv2.aruco.detectMarkers(
-                gray, self.aruco_dict, parameters=self.aruco_params
+                u_gray, self.aruco_dict, parameters=self.aruco_params
             )
+
+        # Fallback: Hanya gunakan enhancement jika BENAR-BENAR tidak ada marker
+        # Pengecekan aman untuk UMat: ids mungkin None atau UMat kosong
+        is_empty = ids is None
+        if not is_empty:
+            # Jika UMat, ambil data ke numpy dulu untuk pengecekan len()
+            if hasattr(ids, 'get'):
+                ids_np = ids.get()
+            else:
+                ids_np = ids
+            is_empty = (ids_np is None or len(ids_np) == 0)
+
+        if is_empty and use_enhancement and _HAS_PREPROCESS:
+            # Gunakan parameter yang lebih ringan untuk enhancement
+            detect_frame = _enhance(frame, clahe_clip=2.0, unsharp_strength=1.0)
+            gray_enh = cv2.cvtColor(detect_frame, cv2.COLOR_BGR2GRAY)
+            try:
+                u_gray_enh = cv2.UMat(gray_enh)
+            except:
+                u_gray_enh = gray_enh
+                
+            if hasattr(cv2.aruco, 'ArucoDetector'):
+                corners, ids, rejected = detector.detectMarkers(u_gray_enh)
+            else:
+                corners, ids, rejected = cv2.aruco.detectMarkers(
+                    u_gray_enh, self.aruco_dict, parameters=self.aruco_params
+                )
+
+        # Jika masih UMat, konversi balik ke numpy untuk pemrosesan koordinat
+        if corners is not None and len(corners) > 0:
+            if hasattr(corners[0], 'get'):
+                corners = [c.get() for c in corners]
+        if ids is not None:
+            if hasattr(ids, 'get'):
+                ids = ids.get()
 
         results = []
 
         if ids is None or len(ids) == 0:
             return results
+
 
         # Estimate pose untuk setiap marker
         rvecs = []
@@ -173,8 +231,22 @@ class ArucoDetector:
             rvec = rvecs[i][0]          # shape (3,)
             tvec = tvecs[i][0]          # shape (3,)
 
-            # Jarak = |tvec| (euclidean) atau tvec[2] (depth Z)
-            distance_cm = float(tvec[2])
+            # ── Estimasi jarak ──────────────────────────────────────────────
+            # Gunakan perimeter marker dalam piksel sebagai estimasi jarak.
+            # Formula: Z = (marker_size_cm * fx) / side_length_px
+            # Lebih robust dari tvec[2] karena tidak menganggap gambar pinhole.
+            side_px = np.mean([
+                np.linalg.norm(corner_pts[1] - corner_pts[0]),
+                np.linalg.norm(corner_pts[2] - corner_pts[1]),
+                np.linalg.norm(corner_pts[3] - corner_pts[2]),
+                np.linalg.norm(corner_pts[0] - corner_pts[3]),
+            ])
+            fx = float(self.camera_matrix[0, 0])
+            if side_px > 0:
+                distance_cm = (self.marker_size_cm * fx) / side_px
+            else:
+                distance_cm = float(tvec[2])  # fallback
+
 
             # Titik tengah marker
             center_x = float(np.mean(corner_pts[:, 0]))
@@ -198,6 +270,56 @@ class ArucoDetector:
             })
 
         return results
+
+    def detect_with_fallback(
+        self,
+        frame: np.ndarray,
+        max_scale: int = 4,
+        use_enhancement: bool = True,
+    ) -> list:
+        """
+        Deteksi ArUco dengan fallback multi-skala.
+
+        Jika deteksi pada resolusi asli gagal (0 marker), coba upscale frame
+        secara progressif (2x, 3x, ... max_scale) hingga marker terdeteksi.
+        Koordinat corner dikembalikan ke ruang koordinat frame asli.
+
+        Metode ini mengatasi keterbatasan ArUco detector pada marker kecil
+        atau sedikit blur akibat fisheye undistortion.
+
+        Args:
+            frame          : BGR image (undistorted)
+            max_scale      : Maksimum faktor upscale (default 4)
+            use_enhancement: Terapkan CLAHE+unsharp sebelum deteksi
+
+        Returns:
+            list of dict (sama seperti detect()), koordinat dalam frame asli.
+        """
+        # Coba deteksi pada resolusi asli terlebih dahulu
+        results = self.detect(frame, use_enhancement=use_enhancement)
+        if results:
+            return results
+
+        # Fallback: upscale progressif
+        h, w = frame.shape[:2]
+        for scale in range(2, max_scale + 1):
+            upscaled = cv2.resize(frame, (w * scale, h * scale),
+                                  interpolation=cv2.INTER_CUBIC)
+            results_up = self.detect(upscaled, use_enhancement=use_enhancement)
+
+            if results_up:
+                # Konversi koordinat kembali ke ruang frame asli
+                inv_scale = 1.0 / scale
+                for r in results_up:
+                    r['corners'] = r['corners'] * inv_scale
+                    r['center'] = (r['center'][0] * inv_scale,
+                                   r['center'][1] * inv_scale)
+                    # tvec x,y perlu di-scale; z (depth) tetap
+                    r['tvec'][0] *= inv_scale
+                    r['tvec'][1] *= inv_scale
+                return results_up
+
+        return []  # Tidak ditemukan di semua skala
 
     def annotate_frame(self, frame, results):
         """

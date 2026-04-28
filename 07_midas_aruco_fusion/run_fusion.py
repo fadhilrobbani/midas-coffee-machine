@@ -23,6 +23,7 @@ import core.calibration_storage as cs
 import core.height_math as hm
 import core.session_reporter as sr
 from core.moil_undistorter import MoilUndistorter
+from core.anypoint_controller import AnypointController
 
 import cv2
 import numpy as np
@@ -72,7 +73,8 @@ for d in [REPORT_DIR, VIDEO_DIR, SCREENSHOT_DIR]:
 
 def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
                  marker_size: float, calibrate_mode: int, true_height: float, true_height_2: float,
-                 n_positions: int = 3):
+                 n_positions: int = 3, cap_width: int = 1280, cap_height: int = 720,
+                 no_anypoint: bool = False):
     print("=" * 55)
     print("  🚀  ArUco + MiDaS + YOLO  |  Cup Height Estimator")
     print("=" * 55)
@@ -92,30 +94,50 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
         print(f"[ERROR] Tidak bisa membuka kamera index {camera_idx}")
         return
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  cap_width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cap_height)
+    # Aktifkan auto-exposure agar sensor bisa menyesuaikan pencahayaan
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)   # 3 = aperture priority (auto)
+    cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)       # matikan autofocus (fisheye fixed-focus)
 
-    time.sleep(2.0)
-    for attempt in range(30):
+    actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    print(f"[CAM] Resolusi: {actual_w}x{actual_h} (diminta {cap_width}x{cap_height})")
+
+    # ── Warmup: tunggu sensor auto-expose (gambar hitam = belum siap) ─────────
+    time.sleep(1.5)
+    print("[CAM] Warmup kamera...", end="", flush=True)
+    tmp_frame = None
+    for attempt in range(90):
         ret, tmp_frame = cap.read()
-        if ret: break
-        time.sleep(0.2)
+        if ret and tmp_frame is not None:
+            brightness = cv2.cvtColor(tmp_frame, cv2.COLOR_BGR2GRAY).mean()
+            if brightness > 15:  # frame cukup terang → sensor siap
+                print(f" siap (brightness={brightness:.0f}, {attempt+1} frame)")
+                break
+        time.sleep(0.1)
     else:
-        print("[ERROR] Kamera mati.")
+        print(f" timeout (brightness masih gelap)")
+        # Tetap lanjutkan, mungkin lingkungan memang gelap
+    if tmp_frame is None:
+        print("[ERROR] Kamera tidak menghasilkan frame.")
         cap.release()
         return
 
+
     # ── Inisiasi Moildev undistorter (hanya jika --fisheye aktif) ─────────────
     moil_undistorter = None
+    anypoint_ctrl    = None
     if getattr(args, "fisheye", False):
         try:
             json_path    = os.path.join(_THIS_DIR, "camera_parameters.json")
-            camera_name  = getattr(args, "moil_camera_name", "lrcp_imx586_240_17")
-            moil_pitch   = float(getattr(args, "moil_pitch", -90.0))
+            camera_name  = getattr(args, "moil_camera_name", "syue_7730v1_6")
+            moil_pitch   = float(getattr(args, "moil_pitch",  0.0))
             moil_yaw     = float(getattr(args, "moil_yaw",    0.0))
-            moil_roll    = float(getattr(args, "moil_roll",    0.0))
-            moil_zoom    = float(getattr(args, "moil_zoom",    2.0))
+            moil_roll    = float(getattr(args, "moil_roll",   0.0))
+            moil_zoom    = float(getattr(args, "moil_zoom",   1.4))
 
+            h, w = tmp_frame.shape[:2]
             moil_undistorter = MoilUndistorter(
                 json_path    = json_path,
                 camera_name  = camera_name,
@@ -124,27 +146,57 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
                 roll         = moil_roll,
                 zoom         = moil_zoom,
                 use_opencl   = True,
+                frame_width  = w,
+                frame_height = h,
             )
 
             # Override camera matrix ArUco dengan focal length Moildev
-            h, w = tmp_frame.shape[:2]
             new_K = moil_undistorter.build_aruco_camera_matrix(w, h)
             aruco.camera_matrix = new_K
             print(f"[MOIL] ArUco camera matrix overridden: "
                   f"fx={new_K[0,0]:.1f}, fy={new_K[1,1]:.1f}, "
                   f"cx={new_K[0,2]:.1f}, cy={new_K[1,2]:.1f}")
 
+            # Inisiasi anypoint controller (mouse drag)
+            anypoint_ctrl = AnypointController(moil_undistorter)
+
         except Exception as e:
             print(f"[MOIL ERROR] Gagal inisiasi MoilUndistorter: {e}")
             print("[MOIL] Melanjutkan tanpa fisheye undistortion.")
             moil_undistorter = None
+            anypoint_ctrl    = None
+
+    WIN_NAME = "ArUco + MiDaS | Cup Height Estimator"
 
     def get_frame():
         r, f = cap.read()
-        if r and moil_undistorter is not None:
+        if not r:
+            return False, None
+        if moil_undistorter is not None and not no_anypoint:
             f = moil_undistorter.undistort(f)
-        return r, f
+            if anypoint_ctrl is not None and not headless:
+                anypoint_ctrl.draw_overlay(f)
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('r') or key == ord('R'):
+                    anypoint_ctrl.reset()
+                    print(f"[MOIL] Reset anypoint → pitch={moil_undistorter.pitch}, yaw={moil_undistorter.yaw}, zoom={moil_undistorter.zoom}")
+                elif key == ord('s') or key == ord('S'):
+                    print(f"[MOIL] Current params: --moil-pitch {moil_undistorter.pitch:.1f} "
+                          f"--moil-yaw {moil_undistorter.yaw:.1f} "
+                          f"--moil-roll {moil_undistorter.roll:.1f} "
+                          f"--moil-zoom {moil_undistorter.zoom:.2f}")
+        return True, f
 
+
+
+    # ── Setup OpenCV window + mouse callback ─────────────────────────────────
+    if not headless:
+        cv2.namedWindow(WIN_NAME, cv2.WINDOW_NORMAL)
+        if anypoint_ctrl is not None:
+            anypoint_ctrl.attach(WIN_NAME)
+            print("[MOIL] 🖱  Anypoint mouse control aktif:")
+            print("         Drag kiri-kanan → Yaw  |  Drag atas-bawah → Pitch")
+            print("         Scroll → Zoom  |  Tekan R → Reset  |  S → Print params")
 
     # Delegate to calibration routines
     import core.calibration_routines as calib_rt
@@ -196,6 +248,8 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="ArUco + MiDaS Cup Height Estimator")
     ap.add_argument("--camera",       type=int,   default=0,     help="Index kamera (default: 0)")
+    ap.add_argument("--cap-width",    type=int,   default=1280,  help="Lebar resolusi USB stream (default: 1280)")
+    ap.add_argument("--cap-height",   type=int,   default=720,   help="Tinggi resolusi USB stream (default: 720)")
     ap.add_argument("--headless",     action="store_true",        help="Tanpa UI — mode terminal")
     ap.add_argument("--marker-size",  type=float, default=5.0,   help="Ukuran Fisik ArUco di meja (cm)")
     ap.add_argument("--calibrate",    type=int,   default=0, choices=[0,1,2,3,4,5,6,7],
@@ -207,16 +261,18 @@ if __name__ == "__main__":
     ap.add_argument("--cup-profile",  type=str,   default="default", help="Nama profil gelas (misal: short, tall) untuk membedakan file kalibrasi.")
     ap.add_argument("--fisheye",           action="store_true",
                     help="Enable fisheye undistortion via Moildev (gunakan bersama --moil-camera-name)")
-    ap.add_argument("--moil-camera-name",  type=str,   default="lrcp_imx586_240_17",
-                    help="Nama profil kamera di camera_parameters.json (default: lrcp_imx586_240_17)")
+    ap.add_argument("--moil-camera-name",  type=str,   default="syue_7730v1_6",
+                    help="Nama profil kamera di camera_parameters.json (default: syue_7730v1_6)")
     ap.add_argument("--moil-pitch",        type=float, default=0.0,
                     help="Anypoint pitch dalam derajat (default: 0.0, kamera menatap lurus)")
     ap.add_argument("--moil-yaw",          type=float, default=0.0,
                     help="Anypoint yaw dalam derajat (default: 0)")
     ap.add_argument("--moil-roll",         type=float, default=0.0,
                     help="Anypoint roll dalam derajat (default: 0)")
-    ap.add_argument("--moil-zoom",         type=float, default=2.0,
-                    help="Zoom factor anypoint Moildev (default: 2.0)")
+    ap.add_argument("--moil-zoom",         type=float, default=1.4,
+                    help="Zoom factor anypoint Moildev (default: 1.4)")
+    ap.add_argument("--no-anypoint",       action="store_true",
+                    help="Gunakan fisheye mode tapi TANPA remap anypoint (frame raw fisheye)")
 
     args = ap.parse_args()
 
@@ -253,5 +309,8 @@ if __name__ == "__main__":
         calibrate_mode=args.calibrate,
         true_height=args.true_height or 0.0,
         true_height_2=args.true_height_2 or 0.0,
-        n_positions=args.n_positions
+        n_positions=args.n_positions,
+        cap_width=args.cap_width,
+        cap_height=args.cap_height,
+        no_anypoint=args.no_anypoint,
     )
