@@ -248,8 +248,8 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="ArUco + MiDaS Cup Height Estimator")
     ap.add_argument("--camera",       type=int,   default=0,     help="Index kamera (default: 0)")
-    ap.add_argument("--cap-width",    type=int,   default=1280,  help="Lebar resolusi USB stream (default: 1280)")
-    ap.add_argument("--cap-height",   type=int,   default=720,   help="Tinggi resolusi USB stream (default: 720)")
+    ap.add_argument("--cap-width",    type=int,   default=2592,  help="Lebar resolusi USB stream (default: 2592)")
+    ap.add_argument("--cap-height",   type=int,   default=1944,  help="Tinggi resolusi USB stream (default: 1944)")
     ap.add_argument("--headless",     action="store_true",        help="Tanpa UI — mode terminal")
     ap.add_argument("--marker-size",  type=float, default=5.0,   help="Ukuran Fisik ArUco di meja (cm)")
     ap.add_argument("--calibrate",    type=int,   default=0, choices=[0,1,2,3,4,5,6,7],
