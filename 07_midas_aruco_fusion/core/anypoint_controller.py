@@ -105,15 +105,18 @@ class AnypointController:
         Kembalikan frame yang sudah diberi anotasi (tidak mengubah original).
         """
         h, w = frame.shape[:2]
-        x0, y0 = w - 260, h - 100
-        x1, y1 = w - 8,   h - 8
+        
+        # UI Scaling factor (2.5x for 2.5K resolution)
+        S = 2.5
+        x0, y0 = w - int(280 * S), h - int(120 * S)
+        x1, y1 = w - int(15 * S),   h - int(15 * S)
 
         cv2.rectangle(frame, (x0, y0), (x1, y1), (10, 10, 30), -1)
-        cv2.rectangle(frame, (x0, y0), (x1, y1), (0, 180, 255), 1)
+        cv2.rectangle(frame, (x0, y0), (x1, y1), (0, 180, 255), 2)
 
         def put(text, row, color=(200, 230, 255)):
-            cv2.putText(frame, text, (x0 + 6, y0 + 18 + row * 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, color, 1, cv2.LINE_AA)
+            cv2.putText(frame, text, (x0 + int(10*S), y0 + int(25*S) + row * int(22 * S)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45 * S, color, 2, cv2.LINE_AA)
 
         put("[ ANYPOINT CTRL ]", 0, (0, 200, 255))
         put(f"Pitch : {self._u.pitch:+.1f}deg  (drag up/dn)", 1)

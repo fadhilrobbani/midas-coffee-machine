@@ -131,7 +131,7 @@ class ArucoDetector:
         print(f"   Marker size : {marker_size_cm} cm")
         print(f"   Focal length: {calib['f_pixel']:.1f} px")
 
-    def detect(self, frame, use_enhancement: bool = True):
+    def detect(self, frame, use_enhancement: bool = True, roi_ratio: float = 1.0):
         """
         Deteksi semua ArUco marker pada frame dan hitung pose 3D-nya.
 
@@ -139,15 +139,29 @@ class ArucoDetector:
             frame           : BGR image (numpy array)
             use_enhancement : Terapkan CLAHE + unsharp sebelum deteksi
                               (default True; matikan di headless/benchmark)
+            roi_ratio       : Rasio ROI tengah (0.0 - 1.0). 
+                              1.0 = full frame, 0.65 = ambil 65% area tengah.
 
         Returns:
             list of dict, masing-masing berisi:
                 - id, corners, distance_cm, rvec, tvec, euler_deg, center,
                   reprojection_error
         """
+        # ── ROI Strategy (The "Tunnel" Fix) ─────────────────────────────────
+        h, w = frame.shape[:2]
+        if roi_ratio < 1.0:
+            roi_w = int(w * roi_ratio)
+            roi_h = int(h * roi_ratio)
+            dw = (w - roi_w) // 2
+            dh = (h - roi_h) // 2
+            detect_frame = frame[dh:dh+roi_h, dw:dw+roi_w]
+        else:
+            dw, dh = 0, 0
+            detect_frame = frame
+
         # ── Strategi deteksi: Gunakan UMat (OpenCL) untuk akselerasi jika mungkin ──
         # Konversi ke Grayscale sekali saja
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(detect_frame, cv2.COLOR_BGR2GRAY)
         
         # Gunakan UMat jika OpenCV mendukung OpenCL untuk deteksi yang lebih cepat
         try:
@@ -165,10 +179,8 @@ class ArucoDetector:
             )
 
         # Fallback: Hanya gunakan enhancement jika BENAR-BENAR tidak ada marker
-        # Pengecekan aman untuk UMat: ids mungkin None atau UMat kosong
         is_empty = ids is None
         if not is_empty:
-            # Jika UMat, ambil data ke numpy dulu untuk pengecekan len()
             if hasattr(ids, 'get'):
                 ids_np = ids.get()
             else:
@@ -177,8 +189,8 @@ class ArucoDetector:
 
         if is_empty and use_enhancement and _HAS_PREPROCESS:
             # Gunakan parameter yang lebih ringan untuk enhancement
-            detect_frame = _enhance(frame, clahe_clip=2.0, unsharp_strength=1.0)
-            gray_enh = cv2.cvtColor(detect_frame, cv2.COLOR_BGR2GRAY)
+            enhanced_frame = _enhance(detect_frame, clahe_clip=2.0, unsharp_strength=1.0)
+            gray_enh = cv2.cvtColor(enhanced_frame, cv2.COLOR_BGR2GRAY)
             try:
                 u_gray_enh = cv2.UMat(gray_enh)
             except:
@@ -203,6 +215,12 @@ class ArucoDetector:
 
         if ids is None or len(ids) == 0:
             return results
+
+        # ── Kembalikan koordinat ke ruang frame asli ──────────────────────────
+        if dw > 0 or dh > 0:
+            for i in range(len(corners)):
+                corners[i][0][:, 0] += dw
+                corners[i][0][:, 1] += dh
 
 
         # Estimate pose untuk setiap marker
@@ -276,6 +294,7 @@ class ArucoDetector:
         frame: np.ndarray,
         max_scale: int = 4,
         use_enhancement: bool = True,
+        roi_ratio: float = 1.0,
     ) -> list:
         """
         Deteksi ArUco dengan fallback multi-skala.
@@ -291,21 +310,25 @@ class ArucoDetector:
             frame          : BGR image (undistorted)
             max_scale      : Maksimum faktor upscale (default 4)
             use_enhancement: Terapkan CLAHE+unsharp sebelum deteksi
+            roi_ratio      : Rasio ROI tengah (0.0 - 1.0).
 
         Returns:
             list of dict (sama seperti detect()), koordinat dalam frame asli.
         """
         # Coba deteksi pada resolusi asli terlebih dahulu
-        results = self.detect(frame, use_enhancement=use_enhancement)
+        results = self.detect(frame, use_enhancement=use_enhancement,
+                              roi_ratio=roi_ratio)
         if results:
             return results
 
         # Fallback: upscale progressif
+        # Upscale dilakukan pada frame asli, ROI tetap diterapkan di dalam detect()
         h, w = frame.shape[:2]
         for scale in range(2, max_scale + 1):
             upscaled = cv2.resize(frame, (w * scale, h * scale),
                                   interpolation=cv2.INTER_CUBIC)
-            results_up = self.detect(upscaled, use_enhancement=use_enhancement)
+            results_up = self.detect(upscaled, use_enhancement=use_enhancement,
+                                     roi_ratio=roi_ratio)
 
             if results_up:
                 # Konversi koordinat kembali ke ruang frame asli
@@ -336,8 +359,8 @@ class ArucoDetector:
 
         if not results:
             cv2.putText(annotated, "No ArUco marker detected",
-                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
-                        (0, 0, 255), 2)
+                        (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.4,
+                        (0, 0, 255), 3)
             return annotated
 
         for r in results:
@@ -347,11 +370,11 @@ class ArucoDetector:
             for j in range(4):
                 pt1 = tuple(corners[j])
                 pt2 = tuple(corners[(j + 1) % 4])
-                cv2.line(annotated, pt1, pt2, (0, 255, 0), 2)
+                cv2.line(annotated, pt1, pt2, (0, 255, 0), 4)
 
             # Gambar axis 3D
             cv2.drawFrameAxes(annotated, self.camera_matrix, self.dist_coeffs,
-                               r["rvec"], r["tvec"], self.marker_size_cm * 0.5)
+                               r["rvec"], r["tvec"], self.marker_size_cm * 0.5, 3)
 
             # Label: ID + Distance
             cx, cy = int(r["center"][0]), int(r["center"][1])
@@ -359,15 +382,16 @@ class ArucoDetector:
             label_dist = f"D:{r['distance_cm']:.1f}cm"
             label_err = f"err:{r['reprojection_error']:.2f}px"
 
+            # Perbesar font dan offset
             cv2.putText(annotated, label_id,
-                        (cx - 40, cy - 25),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+                        (cx - 80, cy - 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 0), 3)
             cv2.putText(annotated, label_dist,
-                        (cx - 40, cy),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                        (cx - 80, cy),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
             cv2.putText(annotated, label_err,
-                        (cx - 40, cy + 25),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+                        (cx - 80, cy + 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (200, 200, 200), 2)
 
             # Euler angles di pojok
             euler = r["euler_deg"]
@@ -375,8 +399,8 @@ class ArucoDetector:
                          f"P:{euler['pitch']:.0f} "
                          f"Y:{euler['yaw']:.0f}")
             cv2.putText(annotated, euler_txt,
-                        (cx - 60, cy + 50),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (180, 180, 255), 1)
+                        (cx - 120, cy + 110),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (180, 180, 255), 2)
 
         return annotated
 

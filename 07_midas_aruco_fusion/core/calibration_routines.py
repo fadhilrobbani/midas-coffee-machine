@@ -38,7 +38,7 @@ def run_calib_1p_2p(get_frame, cap, aruco, yolo, midas, headless, true_height, t
             # If YOLO didn't run recently, clear old boxes
             boxes = None
 
-        aruco_results = aruco.detect(frame)
+        aruco_results = aruco.detect(frame, roi_ratio=0.65)
         z_calib = 0.0
         aruco_roi_c = None
         if aruco_results:
@@ -53,7 +53,7 @@ def run_calib_1p_2p(get_frame, cap, aruco, yolo, midas, headless, true_height, t
                     aruco_roi_c = (x1c + 2, y1c + 2, x2c - 2, y2c - 2)
 
         if (time.time() - last_midas_calib) > 0.2 and z_calib > 0 and aruco_roi_c:
-            boxes = yolo.detect(frame)
+            boxes = yolo.detect(frame, roi_ratio=0.65)
             if boxes:
                 bbox_c = boxes[0]["bbox"]
                 dm = midas.process(frame)
@@ -107,34 +107,36 @@ def run_calib_1p_2p(get_frame, cap, aruco, yolo, midas, headless, true_height, t
         if boxes:
             for b in boxes:
                 x1c, y1c, x2c, y2c = b["bbox"]
-                cv2.rectangle(disp_c, (x1c, y1c), (x2c, y2c), (0, 255, 80), 2)
+                cv2.rectangle(disp_c, (x1c, y1c), (x2c, y2c), (0, 255, 80), 4)
 
-        cv2.rectangle(disp_c, (8, 8), (530, 95), (20, 20, 40), -1)
-        cv2.rectangle(disp_c, (8, 8), (530, 95), (0, 200, 255), 1)
+        S = 2.5
+        panel_w, panel_h = int(530 * S), int(105 * S)
+        cv2.rectangle(disp_c, (25, 25), (25 + panel_w, 25 + panel_h), (20, 20, 40), -1)
+        cv2.rectangle(disp_c, (25, 25), (25 + panel_w, 25 + panel_h), (0, 200, 255), 3)
 
         # Indikator Hardware
         status_aruco = "OK" if z_calib > 0 else "NOT FOUND"
         status_yolo  = "OK" if boxes else "NOT FOUND"
-        cv2.putText(disp_c, f"[ArUco: {status_aruco}]  [YOLO: {status_yolo}]", (18, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+        cv2.putText(disp_c, f"[ArUco: {status_aruco}]  [YOLO: {status_yolo}]", (int(45*S), int(115*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.45 * S, (200, 200, 200), 3)
 
         if phase.startswith("warmup_"):
             idx = phase[-1]
             pct = min(100, int((elapsed / CALIB_WARMUP_SEC) * 100))
             H_t = true_height if idx == "1" else true_height_2
-            cv2.putText(disp_c, f"WARMING UP CUP {idx} (H={H_t}cm)", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 255), 1)
-            cv2.putText(disp_c, f"Keep cup still. Prog: {pct}%", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 200, 255), 1)
+            cv2.putText(disp_c, f"WARMING UP CUP {idx} (H={H_t}cm)", (int(45*S), int(60*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.55 * S, (0, 200, 255), 3)
+            cv2.putText(disp_c, f"Keep cup still. Prog: {pct}%", (int(45*S), int(90*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (150, 200, 255), 2)
 
         elif phase.startswith("sampling_"):
             idx = phase[-1]
             n = len(calib_ratios_1) if idx == "1" else len(calib_ratios_2)
-            cv2.putText(disp_c, f"SAMPLING DATA CUP {idx} (Count: {n}/5)", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 180), 1)
-            cv2.putText(disp_c, "Ensure camera and cup are visible...", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 255, 200), 1)
+            cv2.putText(disp_c, f"SAMPLING DATA CUP {idx} (Count: {n}/5)", (int(45*S), int(60*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.55 * S, (0, 255, 180), 3)
+            cv2.putText(disp_c, "Ensure camera and cup are visible...", (int(45*S), int(90*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (150, 255, 200), 2)
 
         elif phase == "swap_wait":
-            cv2.rectangle(disp_c, (8, 8), (530, 95), (200, 50, 50), -1)
-            cv2.putText(disp_c, "SWAP THE CUP NOW", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            cv2.putText(disp_c, f"Place a cup with height {true_height_2} cm on the tray.", (18, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 220, 255), 1)
-            cv2.putText(disp_c, "Then PRESS 'SPACE' to continue.", (18, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 255, 100), 1)
+            cv2.rectangle(disp_c, (25, 25), (25 + panel_w, 25 + panel_h), (200, 50, 50), -1)
+            cv2.putText(disp_c, "SWAP THE CUP NOW", (int(45*S), int(60*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.65 * S, (255, 255, 255), 4)
+            cv2.putText(disp_c, f"Place a cup with height {true_height_2} cm on the tray.", (int(45*S), int(85*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (200, 220, 255), 2)
+            cv2.putText(disp_c, "Then PRESS 'SPACE' to continue.", (int(45*S), int(110*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (100, 255, 100), 2)
 
         if not headless:
             cv2.imshow("ArUco + MiDaS | Cup Height Estimator", disp_c)
@@ -213,7 +215,7 @@ def run_calib_zgrid(get_frame, cap, aruco, yolo, midas, headless, true_height, n
         if last_midas_calib == 0.0 or (time.time() - last_midas_calib) > 1.0:
             boxes = None
 
-        aruco_results = aruco.detect(frame)
+        aruco_results = aruco.detect(frame, roi_ratio=0.65)
         z_calib   = 0.0
         aruco_roi_c = None
         if aruco_results:
@@ -228,7 +230,7 @@ def run_calib_zgrid(get_frame, cap, aruco, yolo, midas, headless, true_height, n
                     aruco_roi_c = (x1c+2, y1c+2, x2c-2, y2c-2)
 
         if (time.time() - last_midas_calib) > 0.2 and z_calib > 0 and aruco_roi_c and phase == "sampling":
-            boxes = yolo.detect(frame)
+            boxes = yolo.detect(frame, roi_ratio=0.65)
             if boxes:
                 bbox_c = boxes[0]["bbox"]
                 dm = midas.process(frame)
@@ -268,25 +270,29 @@ def run_calib_zgrid(get_frame, cap, aruco, yolo, midas, headless, true_height, n
         if boxes:
             for b in boxes:
                 x1b, y1b, x2b, y2b = b["bbox"]
-                cv2.rectangle(disp_c, (x1b, y1b), (x2b, y2b), (0, 255, 80), 2)
-        cv2.rectangle(disp_c, (8, 8), (535, 100), (20, 20, 40), -1)
-        cv2.rectangle(disp_c, (8, 8), (535, 100), (0, 200, 255), 1)
+                cv2.rectangle(disp_c, (x1b, y1b), (x2b, y2b), (0, 255, 80), 4)
+
+        S = 2.5
+        panel_w, panel_h = int(535 * S), int(105 * S)
+        cv2.rectangle(disp_c, (25, 25), (25 + panel_w, 25 + panel_h), (20, 20, 40), -1)
+        cv2.rectangle(disp_c, (25, 25), (25 + panel_w, 25 + panel_h), (0, 200, 255), 3)
+        
         status_a = "OK" if z_calib > 0 else "NOT FOUND"
         status_y = "OK" if boxes else "NOT FOUND"
-        cv2.putText(disp_c, f"[ArUco: {status_a}]  [YOLO: {status_y}]", (18, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200,200,200), 1)
+        cv2.putText(disp_c, f"[ArUco: {status_a}]  [YOLO: {status_y}]", (int(45*S), int(115*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.45 * S, (200,200,200), 3)
 
         if phase == "warmup":
             pct = min(100, int((elapsed/CALIB_WARMUP_SEC)*100))
-            cv2.putText(disp_c, f"Z-GRID: Warming up position {pos_idx+1}/{n_positions}", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 255), 1)
-            cv2.putText(disp_c, f"Keep cup + nozzle still. Prog: {pct}%", (18, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 200, 255), 1)
+            cv2.putText(disp_c, f"Z-GRID: Warming up position {pos_idx+1}/{n_positions}", (int(45*S), int(60*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.55 * S, (0, 200, 255), 3)
+            cv2.putText(disp_c, f"Keep cup + nozzle still. Prog: {pct}%", (int(45*S), int(90*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (150, 200, 255), 2)
         elif phase == "sampling":
-            cv2.putText(disp_c, f"Z-GRID: Sampling pos {pos_idx+1}/{n_positions} (Count: {len(pos_ratios)}/5)", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 180), 1)
-            cv2.putText(disp_c, f"Z_tray = {z_calib:.1f} cm", (18, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 180, 60), 1)
+            cv2.putText(disp_c, f"Z-GRID: Sampling pos {pos_idx+1}/{n_positions} (Count: {len(pos_ratios)}/5)", (int(45*S), int(60*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.55 * S, (0, 255, 180), 3)
+            cv2.putText(disp_c, f"Z_tray = {z_calib:.1f} cm", (int(45*S), int(90*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.55 * S, (255, 180, 60), 3)
         elif phase == "swap_wait":
-            cv2.rectangle(disp_c, (8, 8), (535, 100), (160, 50, 30), -1)
-            cv2.putText(disp_c, f"MOVE NOZZLE TO NEXT POSITION", (18, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 2)
-            cv2.putText(disp_c, f"({pos_idx+1}/{n_positions} done)  Keep same cup visible.", (18, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 220, 255), 1)
-            cv2.putText(disp_c, "Press SPACE when ready.", (18, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 255, 100), 1)
+            cv2.rectangle(disp_c, (25, 25), (25 + panel_w, 25 + panel_h), (160, 50, 30), -1)
+            cv2.putText(disp_c, f"MOVE NOZZLE TO NEXT POSITION", (int(45*S), int(62*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.6 * S, (255, 255, 255), 4)
+            cv2.putText(disp_c, f"({pos_idx+1}/{n_positions} done)  Keep same cup visible.", (int(45*S), int(88*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (200, 220, 255), 2)
+            cv2.putText(disp_c, "Press SPACE when ready.", (int(45*S), int(110*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (100, 255, 100), 2)
 
         if not headless:
             cv2.imshow("ArUco + MiDaS | Cup Height Estimator", disp_c)
@@ -346,7 +352,7 @@ def run_calib_bbox(get_frame, cap, aruco, yolo, midas, headless, true_height):
         if last_midas_calib == 0.0 or (time.time() - last_midas_calib) > 1.0:
             boxes = None
 
-        aruco_results = aruco.detect(frame)
+        aruco_results = aruco.detect(frame, roi_ratio=0.65)
         z_calib = 0.0; aruco_roi_c = None
         if aruco_results:
             best = aruco.get_best_distance(aruco_results)
@@ -360,7 +366,7 @@ def run_calib_bbox(get_frame, cap, aruco, yolo, midas, headless, true_height):
                     aruco_roi_c = (x1c+2, y1c+2, x2c-2, y2c-2)
 
         if (time.time() - last_midas_calib) > 0.2 and z_calib > 0 and aruco_roi_c and phase == "sampling":
-            boxes = yolo.detect(frame)
+            boxes = yolo.detect(frame, roi_ratio=0.65)
             if boxes:
                 bbox_c = boxes[0]["bbox"]
                 dm = midas.process(frame)
@@ -397,25 +403,29 @@ def run_calib_bbox(get_frame, cap, aruco, yolo, midas, headless, true_height):
         if boxes:
             for b in boxes:
                 x1b,y1b,x2b,y2b = b["bbox"]
-                cv2.rectangle(disp_c,(x1b,y1b),(x2b,y2b),(0,255,80),2)
-        cv2.rectangle(disp_c,(8,8),(535,100),(20,20,40),-1)
-        cv2.rectangle(disp_c,(8,8),(535,100),(0,200,255),1)
+                cv2.rectangle(disp_c,(x1b,y1b),(x2b,y2b),(0,255,80),4)
+
+        S = 2.5
+        panel_w, panel_h = int(535 * S), int(105 * S)
+        cv2.rectangle(disp_c, (25, 25), (25 + panel_w, 25 + panel_h), (20, 20, 40), -1)
+        cv2.rectangle(disp_c, (25, 25), (25 + panel_w, 25 + panel_h), (0, 200, 255), 3)
+        
         status_a = "OK" if z_calib > 0 else "NOT FOUND"
         status_y = "OK" if boxes else "NOT FOUND"
-        cv2.putText(disp_c,f"[ArUco: {status_a}]  [YOLO: {status_y}]",(18,92),cv2.FONT_HERSHEY_SIMPLEX,0.4,(200,200,200),1)
+        cv2.putText(disp_c,f"[ArUco: {status_a}]  [YOLO: {status_y}]",(int(45*S), int(115*S)),cv2.FONT_HERSHEY_SIMPLEX,0.45 * S,(200,200,200),3)
         if phase == "warmup":
             pct = min(100, int((elapsed/CALIB_WARMUP_SEC)*100))
-            cv2.putText(disp_c,f"BBOX-AREA: Warming up position {pos_idx4+1}/2",(18,30),cv2.FONT_HERSHEY_SIMPLEX,0.5,(0,200,255),1)
-            cv2.putText(disp_c,f"Keep cup still. Prog: {pct}%",(18,58),cv2.FONT_HERSHEY_SIMPLEX,0.45,(150,200,255),1)
+            cv2.putText(disp_c,f"BBOX-AREA: Warming up position {pos_idx4+1}/2",(int(45*S), int(60*S)),cv2.FONT_HERSHEY_SIMPLEX,0.55 * S,(0,200,255),3)
+            cv2.putText(disp_c,f"Keep cup still. Prog: {pct}%",(int(45*S), int(90*S)),cv2.FONT_HERSHEY_SIMPLEX,0.5 * S,(150,200,255),2)
         elif phase == "sampling":
             n4 = len(pos_ratios4)
-            cv2.putText(disp_c,f"BBOX-AREA: Sampling pos {pos_idx4+1}/2 (Count: {n4}/5)",(18,30),cv2.FONT_HERSHEY_SIMPLEX,0.5,(0,255,180),1)
-            cv2.putText(disp_c,f"Z_tray = {z_calib:.1f} cm",(18,58),cv2.FONT_HERSHEY_SIMPLEX,0.5,(255,180,60),1)
+            cv2.putText(disp_c,f"BBOX-AREA: Sampling pos {pos_idx4+1}/2 (Count: {n4}/5)",(int(45*S), int(60*S)),cv2.FONT_HERSHEY_SIMPLEX,0.55 * S,(0,255,180),3)
+            cv2.putText(disp_c,f"Z_tray = {z_calib:.1f} cm",(int(45*S), int(90*S)),cv2.FONT_HERSHEY_SIMPLEX,0.55 * S,(255,180,60),3)
         elif phase == "swap_wait":
-            cv2.rectangle(disp_c,(8,8),(535,100),(160,50,30),-1)
-            cv2.putText(disp_c,"MOVE NOZZLE TO DIFFERENT HEIGHT",(18,32),cv2.FONT_HERSHEY_SIMPLEX,0.55,(255,255,255),2)
-            cv2.putText(disp_c,"(1/2 done)  Keep same cup visible.",(18,58),cv2.FONT_HERSHEY_SIMPLEX,0.45,(200,220,255),1)
-            cv2.putText(disp_c,"Press SPACE when ready.",(18,80),cv2.FONT_HERSHEY_SIMPLEX,0.45,(100,255,100),1)
+            cv2.rectangle(disp_c,(25, 25), (25 + panel_w, 25 + panel_h),(160, 50, 30),-1)
+            cv2.putText(disp_c,"MOVE NOZZLE TO DIFFERENT HEIGHT",(int(45*S), int(62*S)),cv2.FONT_HERSHEY_SIMPLEX,0.6 * S,(255,255,255),4)
+            cv2.putText(disp_c,"(1/2 done)  Keep same cup visible.",(int(45*S), int(88*S)),cv2.FONT_HERSHEY_SIMPLEX,0.5 * S,(200,220,255),2)
+            cv2.putText(disp_c,"Press SPACE when ready.",(int(45*S), int(110*S)),cv2.FONT_HERSHEY_SIMPLEX,0.5 * S,(100,255,100),2)
 
         if not headless:
             cv2.imshow("ArUco + MiDaS | Cup Height Estimator", disp_c)
@@ -473,14 +483,14 @@ def run_calib_geom(get_frame, cap, aruco, yolo, midas, headless, true_height, n_
         if (time.time() - last_det) > 1.0:
             boxes = None
 
-        aruco_results = aruco.detect(frame)
+        aruco_results = aruco.detect(frame, roi_ratio=0.65)
         z_calib = 0.0
         if aruco_results:
             best = aruco.get_best_distance(aruco_results)
             if best: z_calib = best["distance_cm"]
 
         if (time.time() - last_det) > 0.15 and z_calib > 0 and phase == "sampling":
-            boxes = yolo.detect(frame)
+            boxes = yolo.detect(frame, roi_ratio=0.65)
             last_det = time.time()
             if boxes:
                 x1b, y1b, x2b, y2b = boxes[0]["bbox"]
@@ -510,25 +520,29 @@ def run_calib_geom(get_frame, cap, aruco, yolo, midas, headless, true_height, n_
         if boxes:
             for b in boxes:
                 x1b, y1b, x2b, y2b = b["bbox"]
-                cv2.rectangle(disp_c, (x1b, y1b), (x2b, y2b), (0, 255, 80), 2)
-        cv2.rectangle(disp_c, (8, 8), (535, 100), (20, 20, 40), -1)
-        cv2.rectangle(disp_c, (8, 8), (535, 100), (0, 220, 120), 1)
+                cv2.rectangle(disp_c, (x1b, y1b), (x2b, y2b), (0, 255, 80), 4)
+
+        S = 2.5
+        panel_w, panel_h = int(535 * S), int(105 * S)
+        cv2.rectangle(disp_c, (25, 25), (25 + panel_w, 25 + panel_h), (20, 20, 40), -1)
+        cv2.rectangle(disp_c, (25, 25), (25 + panel_w, 25 + panel_h), (0, 220, 120), 3)
+        
         status_a = "OK" if z_calib > 0 else "NOT FOUND"
         status_y = "OK" if boxes else "NOT FOUND"
-        cv2.putText(disp_c, f"[ArUco: {status_a}]  [YOLO: {status_y}]", (18, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+        cv2.putText(disp_c, f"[ArUco: {status_a}]  [YOLO: {status_y}]", (int(45*S), int(115*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.45 * S, (200, 200, 200), 3)
 
         if phase == "warmup":
             pct = min(100, int((elapsed / CALIB_WARMUP_SEC) * 100))
-            cv2.putText(disp_c, f"GEO-GRID ({pos_idx+1}/{n_positions}): Warming up... {pct}%", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 1)
-            cv2.putText(disp_c, f"Keep cup {true_height}cm still.", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 220, 255), 1)
+            cv2.putText(disp_c, f"GEO-GRID ({pos_idx+1}/{n_positions}): Warming up... {pct}%", (int(45*S), int(60*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.6 * S, (0, 220, 255), 3)
+            cv2.putText(disp_c, f"Keep cup {true_height}cm still.", (int(45*S), int(90*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (150, 220, 255), 2)
         elif phase == "sampling":
             n5 = len(current_g_z)
-            cv2.putText(disp_c, f"GEO-GRID ({pos_idx+1}/{n_positions}): Sampling ({n5}/30)", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 180), 1)
-            cv2.putText(disp_c, f"Z_tray = {z_calib:.1f} cm", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 255, 200), 1)
+            cv2.putText(disp_c, f"GEO-GRID ({pos_idx+1}/{n_positions}): Sampling ({n5}/30)", (int(45*S), int(60*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.6 * S, (0, 255, 180), 3)
+            cv2.putText(disp_c, f"Z_tray = {z_calib:.1f} cm", (int(45*S), int(90*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.55 * S, (150, 255, 200), 3)
         elif phase == "swap_wait":
-            cv2.rectangle(disp_c, (8, 8), (535, 100), (40, 40, 150), -1)
-            cv2.putText(disp_c, "MOVE NOZZLE TO NEW HEIGHT", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
-            cv2.putText(disp_c, "Wait for camera to auto-focus, then press SPACE.", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 220, 255), 1)
+            cv2.rectangle(disp_c, (25, 25), (25 + panel_w, 25 + panel_h), (40, 40, 150), -1)
+            cv2.putText(disp_c, "MOVE NOZZLE TO NEW HEIGHT", (int(45*S), int(60*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.6 * S, (255, 255, 255), 4)
+            cv2.putText(disp_c, "Wait for focus, then press SPACE.", (int(45*S), int(90*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (200, 220, 255), 2)
 
         if not headless:
             cv2.imshow("ArUco + MiDaS | Cup Height Estimator", disp_c)
@@ -581,7 +595,7 @@ def run_calib_bilateral(get_frame, cap, aruco, yolo, midas, headless, true_heigh
 
         if (time.time() - last_midas_calib) > 1.0: boxes = None
 
-        aruco_results = aruco.detect(frame)
+        aruco_results = aruco.detect(frame, roi_ratio=0.65)
         z_calib = 0.0
         aruco_roi_c = None
         if aruco_results:
@@ -596,7 +610,7 @@ def run_calib_bilateral(get_frame, cap, aruco, yolo, midas, headless, true_heigh
                     aruco_roi_c = (x1c + 2, y1c + 2, x2c - 2, y2c - 2)
 
         if (time.time() - last_midas_calib) > 0.2 and z_calib > 0 and aruco_roi_c and phase.startswith("sample_"):
-            boxes = yolo.detect(frame)
+            boxes = yolo.detect(frame, roi_ratio=0.65)
             if boxes:
                 bbox_c = boxes[0]["bbox"]
                 dm = midas.process(frame)
@@ -660,31 +674,34 @@ def run_calib_bilateral(get_frame, cap, aruco, yolo, midas, headless, true_heigh
         if boxes:
             for b in boxes:
                 x1b, y1b, x2b, y2b = b["bbox"]
-                cv2.rectangle(disp_c, (x1b, y1b), (x2b, y2b), (0, 255, 80), 2)
-        cv2.rectangle(disp_c, (8, 8), (535, 100), (20, 20, 40), -1)
-        cv2.rectangle(disp_c, (8, 8), (535, 100), (0, 220, 120), 1)
+                cv2.rectangle(disp_c, (x1b, y1b), (x2b, y2b), (0, 255, 80), 4)
 
-        cv2.putText(disp_c, f"[ArUco: {'OK' if z_calib>0 else 'NO'}] [pos: {pos_idx+1}/{n_positions}]", (18, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 200), 1)
+        S = 2.5
+        panel_w, panel_h = int(535 * S), int(105 * S)
+        cv2.rectangle(disp_c, (25, 25), (25 + panel_w, 25 + panel_h), (20, 20, 40), -1)
+        cv2.rectangle(disp_c, (25, 25), (25 + panel_w, 25 + panel_h), (0, 220, 120), 3)
+
+        cv2.putText(disp_c, f"[ArUco: {'OK' if z_calib>0 else 'NO'}] [pos: {pos_idx+1}/{n_positions}]", (int(45*S), int(115*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.45 * S, (200, 200, 200), 3)
 
         if phase.startswith("warmup_c"):
             idx = 1 if "c1" in phase else 2
             H_t = true_height if idx == 1 else true_height_2
             pct = min(100, int((elapsed / CALIB_WARMUP) * 100))
-            cv2.putText(disp_c, f"BILATERAL GRID: Warming Up Cup {idx} ... {pct}%", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 1)
-            cv2.putText(disp_c, f"Place {H_t}cm cup. Keep still.", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 220, 255), 1)
+            cv2.putText(disp_c, f"BILATERAL GRID: Warming Up Cup {idx} ... {pct}%", (int(45*S), int(60*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.6 * S, (0, 220, 255), 3)
+            cv2.putText(disp_c, f"Place {H_t}cm cup. Keep still.", (int(45*S), int(90*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (150, 220, 255), 2)
         elif phase.startswith("sample_c"):
             idx = 1 if "c1" in phase else 2
             cnt = len(r1_samples) if idx == 1 else len(r2_samples)
-            cv2.putText(disp_c, f"BILATERAL GRID: Sampling Cup {idx} ({cnt}/8)", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 180), 1)
-            cv2.putText(disp_c, f"Z_tray = {z_calib:.1f} cm", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 255, 200), 1)
+            cv2.putText(disp_c, f"BILATERAL GRID: Sampling Cup {idx} ({cnt}/8)", (int(45*S), int(60*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.6 * S, (0, 255, 180), 3)
+            cv2.putText(disp_c, f"Z_tray = {z_calib:.1f} cm", (int(45*S), int(90*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (150, 255, 200), 2)
         elif phase == "swap_c2":
-            cv2.rectangle(disp_c, (8, 8), (535, 100), (80, 50, 150), -1)
-            cv2.putText(disp_c, f"SWAP TO TALL CUP ({true_height_2} cm)", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
-            cv2.putText(disp_c, "Press SPACE to scan cup 2.", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 220, 255), 1)
+            cv2.rectangle(disp_c, (25, 25), (25 + panel_w, 25 + panel_h), (80, 50, 150), -1)
+            cv2.putText(disp_c, f"SWAP TO TALL CUP ({true_height_2} cm)", (int(45*S), int(60*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.6 * S, (255, 255, 255), 4)
+            cv2.putText(disp_c, "Press SPACE to scan cup 2.", (int(45*S), int(95*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (200, 220, 255), 2)
         elif phase == "swap_z":
-            cv2.rectangle(disp_c, (8, 8), (535, 100), (40, 40, 150), -1)
-            cv2.putText(disp_c, "MOVE NOZZLE TO DIFFERENT HEIGHT", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
-            cv2.putText(disp_c, f"Wait for focus. PLACEMENT: {true_height}cm CUP. Press SPACE.", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 220, 255), 1)
+            cv2.rectangle(disp_c, (25, 25), (25 + panel_w, 25 + panel_h), (40, 40, 150), -1)
+            cv2.putText(disp_c, "MOVE NOZZLE TO DIFFERENT HEIGHT", (int(45*S), int(60*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.6 * S, (255, 255, 255), 4)
+            cv2.putText(disp_c, f"Wait for focus. PLACE {true_height}cm CUP. SPACE.", (int(45*S), int(95*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (200, 220, 255), 2)
 
         if not headless:
             cv2.imshow("ArUco + MiDaS | Cup Height Estimator", disp_c)
@@ -730,14 +747,14 @@ def run_calib_analytic(get_frame, cap, aruco, yolo, midas, headless, true_height
 
         if (time.time() - last_det) > 1.0: boxes = None
 
-        aruco_results = aruco.detect(frame)
+        aruco_results = aruco.detect(frame, roi_ratio=0.65)
         z_calib = 0.0
         if aruco_results:
             best = aruco.get_best_distance(aruco_results)
             if best: z_calib = best["distance_cm"]
 
         if (time.time() - last_det) > 0.1 and z_calib > 0 and phase.startswith("sample_"):
-            boxes = yolo.detect(frame)
+            boxes = yolo.detect(frame, roi_ratio=0.65)
             last_det = time.time()
             if boxes:
                 x1b, y1b, x2b, y2b = boxes[0]["bbox"]
@@ -782,20 +799,25 @@ def run_calib_analytic(get_frame, cap, aruco, yolo, midas, headless, true_height
         if boxes:
             for b in boxes:
                 x1b, y1b, x2b, y2b = b["bbox"]
-                cv2.rectangle(disp_c, (x1b, y1b), (x2b, y2b), (0, 255, 80), 2)
-        cv2.rectangle(disp_c, (8, 8), (535, 100), (20, 20, 60), -1)
+                cv2.rectangle(disp_c, (x1b, y1b), (x2b, y2b), (0, 255, 80), 4)
+
+        S = 2.5
+        panel_w, panel_h = int(535 * S), int(105 * S)
+        cv2.rectangle(disp_c, (25, 25), (25 + panel_w, 25 + panel_h), (20, 20, 60), -1)
+        cv2.rectangle(disp_c, (25, 25), (25 + panel_w, 25 + panel_h), (90, 90, 90), 3)
 
         if phase == "warmup_1" or phase == "sample_1":
-            cv2.putText(disp_c, f"YOLO ANALYTIC: Cup 1 ({true_height}cm)", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2)
+            cv2.putText(disp_c, f"YOLO ANALYTIC: Cup 1 ({true_height}cm)", (int(45*S), int(60*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.6 * S, (0, 220, 255), 3)
             if phase == "sample_1":
-                cv2.putText(disp_c, f"Sampling [{len(y_samples_1)}/30]", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 150), 1)
+                cv2.putText(disp_c, f"Sampling [{len(y_samples_1)}/30]", (int(45*S), int(95*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (0, 255, 150), 3)
         elif phase == "swap":
-            cv2.rectangle(disp_c, (8, 8), (535, 100), (80, 50, 150), -1)
-            cv2.putText(disp_c, f"SWAP TO CUP 2 ({true_height_2} cm)", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
-            cv2.putText(disp_c, "Press SPACE when ready.", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 220, 255), 1)
+            cv2.rectangle(disp_c, (25, 25), (25 + panel_w, 25 + panel_h), (80, 50, 150), -1)
+            cv2.putText(disp_c, f"SWAP TO CUP 2 ({true_height_2} cm)", (int(45*S), int(60*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.6 * S, (255, 255, 255), 4)
+            cv2.putText(disp_c, "Press SPACE when ready.", (int(45*S), int(95*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (200, 220, 255), 2)
         elif phase == "warmup_2" or phase == "sample_2":
-            cv2.putText(disp_c, f"YOLO ANALYTIC: Cup 2 ({true_height_2}cm)", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2)
+            cv2.putText(disp_c, f"YOLO ANALYTIC: Cup 2 ({true_height_2}cm)", (int(45*S), int(60*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.6 * S, (0, 220, 255), 3)
             if phase == "sample_2":
+                cv2.putText(disp_c, f"Sampling [{len(y_samples_2)}/30]", (int(45*S), int(95*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (0, 255, 150), 3)
                 cv2.putText(disp_c, f"Sampling [{len(y_samples_2)}/30]", (18, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 150), 1)
 
         if not headless:

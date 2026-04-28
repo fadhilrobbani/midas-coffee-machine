@@ -40,7 +40,7 @@ def run_live_pipeline(get_frame, cap, aruco, yolo, midas, headless, calib_data, 
             stats_total_frames += 1
             h_frame, w_frame = frame.shape[:2]
 
-            aruco_results = aruco.detect(frame)
+            aruco_results = aruco.detect(frame, roi_ratio=0.65)
             if aruco_results:
                 best = aruco.get_best_distance(aruco_results)
                 if best:
@@ -55,7 +55,7 @@ def run_live_pipeline(get_frame, cap, aruco, yolo, midas, headless, calib_data, 
                         aruco_roi = (x1 + pad_x, y1 + pad_y, x2 - pad_x, y2 - pad_y)
 
             if (now - last_midas_t) >= midas_interval and z_tray_live > 0 and aruco_roi:
-                boxes = yolo.detect(frame)
+                boxes = yolo.detect(frame, roi_ratio=0.65)
                 if boxes:
                     # Sort left-to-right to keep cup ordering consistent
                     boxes = sorted(boxes, key=lambda b: b["bbox"][0])
@@ -124,58 +124,64 @@ def run_live_pipeline(get_frame, cap, aruco, yolo, midas, headless, calib_data, 
             if aruco_results:
                 disp = aruco.annotate_frame(disp, aruco_results)
             if aruco_roi:
-                cv2.rectangle(disp, aruco_roi[:2], aruco_roi[2:], (255, 140, 0), 1)
+                cv2.rectangle(disp, aruco_roi[:2], aruco_roi[2:], (255, 140, 0), 3)
             for bbox in cup_bboxes:
                 x1c, y1c, x2c, y2c = bbox
-                cv2.rectangle(disp, (x1c, y1c), (x2c, y2c), (0, 255, 80), 2)
+                cv2.rectangle(disp, (x1c, y1c), (x2c, y2c), (0, 255, 80), 5)
 
-            cv2.rectangle(disp, (8, 8), (420, 130), (25, 25, 25), -1)
-            cv2.rectangle(disp, (8, 8), (420, 130), (90, 90, 90), 1)
+            # UI Scaling factor (2.5x for 2.5K resolution)
+            S = 2.5
+            panel_w, panel_h = int(420 * S), int(135 * S)
+            cv2.rectangle(disp, (20, 20), (20 + panel_w, 20 + panel_h), (25, 25, 25), -1)
+            cv2.rectangle(disp, (20, 20), (20 + panel_w, 20 + panel_h), (90, 90, 90), 2)
 
             if last_depth_norm is not None:
                 depth_color = cv2.applyColorMap(last_depth_norm, cv2.COLORMAP_JET)
-                pip_h, pip_w = int(h_frame / 3.0), int(w_frame / 3.0)
+                pip_h, pip_w = int(h_frame / 3.2), int(w_frame / 3.2)
                 depth_resized = cv2.resize(depth_color, (pip_w, pip_h))
-                pip_y1 = h_frame - pip_h - 26
-                pip_y2 = h_frame - 26
-                pip_x1 = w_frame - pip_w - 5
-                pip_x2 = w_frame - 5
+                pip_margin = int(40 * S)
+                pip_y1 = h_frame - pip_h - pip_margin
+                pip_y2 = h_frame - pip_margin
+                pip_x1 = w_frame - pip_w - int(10 * S)
+                pip_x2 = w_frame - int(10 * S)
                 disp[pip_y1:pip_y2, pip_x1:pip_x2] = depth_resized
-                cv2.rectangle(disp, (pip_x1, pip_y1), (pip_x2, pip_y2), (200, 200, 200), 2)
-                cv2.putText(disp, "MiDaS Depth", (pip_x1 + 6, pip_y1 + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+                cv2.rectangle(disp, (pip_x1, pip_y1), (pip_x2, pip_y2), (200, 200, 200), 3)
+                cv2.putText(disp, "MiDaS Depth", (pip_x1 + int(12*S), pip_y1 + int(28*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (255, 255, 255), 3)
 
-            cv2.putText(disp, "CUP HEIGHTS", (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (170, 170, 170), 1)
-            cv2.putText(disp, f"Z_tray: {z_tray_live:.1f} cm", (210, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 160, 60), 1)
+            # Panel Text
+            cv2.putText(disp, "CUP HEIGHTS", (int(40*S), int(45*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.55 * S, (170, 170, 170), 3)
+            cv2.putText(disp, f"Z_tray: {z_tray_live:.1f} cm", (int(230*S), int(40*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (255, 160, 60), 3)
             
-            base_y = 65
+            base_y = int(95 * S)
             for i in range(2):
                 h_val = cup_heights_ema[i]
-                y_pos = base_y + (i * 38)
+                y_pos = base_y + (i * int(50 * S))
                 lbl = f"CUP {i+1}:"
                 if h_val and h_val > 0:
-                    cv2.putText(disp, lbl, (18, y_pos-8), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
-                    cv2.putText(disp, f"{h_val:.1f} cm", (85, y_pos+2), cv2.FONT_HERSHEY_DUPLEX, 1.2, (0, 255, 100), 2)
+                    cv2.putText(disp, lbl, (int(40*S), y_pos-int(15*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.6 * S, (200, 200, 200), 2)
+                    cv2.putText(disp, f"{h_val:.1f} cm", (int(115*S), y_pos+int(5*S)), cv2.FONT_HERSHEY_DUPLEX, 1.3 * S, (0, 255, 100), 4)
                     z_rim_val = max(0.0, z_tray_live - h_val)
-                    cv2.putText(disp, f"Z_rim: {z_rim_val:.1f} cm", (250, y_pos-2), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 255, 100), 1)
+                    cv2.putText(disp, f"Z_rim: {z_rim_val:.1f} cm", (int(280*S), y_pos-int(4*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (100, 255, 100), 2)
                 else:
-                    cv2.putText(disp, lbl, (18, y_pos-8), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (100, 100, 100), 1)
-                    cv2.putText(disp, "-- cm", (85, y_pos+2), cv2.FONT_HERSHEY_DUPLEX, 1.2, (70, 70, 70), 2)
-                    cv2.putText(disp, f"Z_rim: -- cm", (250, y_pos-2), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 100, 100), 1)
+                    cv2.putText(disp, lbl, (int(40*S), y_pos-int(15*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.6 * S, (100, 100, 100), 2)
+                    cv2.putText(disp, "-- cm", (int(115*S), y_pos+int(5*S)), cv2.FONT_HERSHEY_DUPLEX, 1.3 * S, (70, 70, 70), 4)
+                    cv2.putText(disp, f"Z_rim: -- cm", (int(280*S), y_pos-int(4*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (100, 100, 100), 2)
 
             if is_recording:
                 if int(time.time() * 2) % 2 == 0:
-                    cv2.circle(disp, (w_frame - 65, 25), 6, (0, 0, 255), -1)
-                    cv2.putText(disp, "REC", (w_frame - 50, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                    cv2.circle(disp, (w_frame - int(140*S), int(45*S)), int(15*S), (0, 0, 255), -1)
+                    cv2.putText(disp, "REC", (w_frame - int(115*S), int(58*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.9 * S, (0, 0, 255), 4)
                 if video_writer is not None:
                     video_writer.write(disp)
 
-            cv2.rectangle(disp, (0, h_frame - 26), (w_frame, h_frame), (15, 15, 15), -1)
+            bar_h = int(45 * S)
+            cv2.rectangle(disp, (0, h_frame - bar_h), (w_frame, h_frame), (15, 15, 15), -1)
             bar_txt = f"ArUco: {'OK' if z_tray_live else 'X'} | YOLO: {'OK' if cup_bboxes else 'X'} | [R] Record  [S] Screen  [Q] Quit"
 
-            cv2.putText(disp, bar_txt, (10, h_frame - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (130, 200, 130), 1)
+            cv2.putText(disp, bar_txt, (int(20*S), h_frame - int(15*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.5 * S, (130, 200, 130), 3)
 
             if getattr(calib_data, "get", lambda x: 0)("type") == 5 or (isinstance(calib_data, dict) and calib_data.get("type") == 5):
-                cv2.putText(disp, f"TARGET MENU: {active_cup_str} cm", (18, 105), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
+                cv2.putText(disp, f"TARGET MENU: {active_cup_str} cm", (int(40*S), int(145*S)), cv2.FONT_HERSHEY_SIMPLEX, 0.65 * S, (0, 255, 255), 3)
 
             if not headless:
                 cv2.imshow("ArUco + MiDaS | Cup Height Estimator", disp)

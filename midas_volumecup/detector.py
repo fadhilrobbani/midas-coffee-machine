@@ -26,12 +26,29 @@ class YoloDetector:
             if local_utils:
                 sys.modules['utils'] = local_utils
 
-    def detect(self, frame):
-        """ Returns list of dicts: [{'bbox': (x1,y1,x2,y2), 'conf': float}] """
+    def detect(self, frame, roi_ratio: float = 1.0):
+        """ 
+        Returns list of dicts: [{'bbox': (x1,y1,x2,y2), 'conf': float}] 
+        Args:
+            frame: BGR image
+            roi_ratio: Rasio ROI tengah (0.0 - 1.0). 1.0 = full frame.
+        """
+        # ── ROI Strategy (The "Tunnel" Fix) ─────────────────────────────────
+        h, w = frame.shape[:2]
+        if roi_ratio < 1.0:
+            roi_w = int(w * roi_ratio)
+            roi_h = int(h * roi_ratio)
+            dw = (w - roi_w) // 2
+            dh = (h - roi_h) // 2
+            detect_frame = frame[dh:dh+roi_h, dw:dw+roi_w]
+        else:
+            dw, dh = 0, 0
+            detect_frame = frame
+
         boxes = []
         if self.is_ultralytics:
             # Optimize: use imgsz=320 to speed up inference on CPU
-            results = self.model(frame, verbose=False, imgsz=320)
+            results = self.model(detect_frame, verbose=False, imgsz=320)
             if len(results) > 0:
                 for det in results[0].boxes:
                     cls_id = int(det.cls[0].item())
@@ -39,14 +56,23 @@ class YoloDetector:
                     if cls_id == 0:
                         x1, y1, x2, y2 = map(int, det.xyxy[0].tolist())
                         conf = float(det.conf[0].item())
+                        
+                        # Shift back to original coordinates
+                        x1, x2 = x1 + dw, x2 + dw
+                        y1, y2 = y1 + dh, y2 + dh
                         boxes.append({"bbox": (x1, y1, x2, y2), "conf": conf})
         else:
-            results = self.model(frame)
+            results = self.model(detect_frame)
             df = results.pandas().xyxy[0]
             for _, row in df.iterrows():
                 if int(row['class']) == 0:
+                    x1, y1, x2, y2 = int(row['xmin']), int(row['ymin']), int(row['xmax']), int(row['ymax'])
+                    
+                    # Shift back to original coordinates
+                    x1, x2 = x1 + dw, x2 + dw
+                    y1, y2 = y1 + dh, y2 + dh
                     boxes.append({
-                        "bbox": (int(row['xmin']), int(row['ymin']), int(row['xmax']), int(row['ymax'])),
+                        "bbox": (x1, y1, x2, y2),
                         "conf": float(row['confidence'])
                     })
         
