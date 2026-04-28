@@ -3,7 +3,7 @@ import os
 import sys
 
 class YoloDetector:
-    def __init__(self, weights_path="weights/cup_detection_v3_12_s_best.pt"):
+    def __init__(self, weights_path="../weights/cup_detection_v3_12_s_best.pt"):
         print(f"Loading YOLO model from {weights_path}...")
         self.is_ultralytics = False
         try:

@@ -9,7 +9,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from midas.model_loader import load_model
 
 class MidasDepthEstimator:
-    def __init__(self, weights_path="weights/midas_v21_small_256.pt", model_type="midas_v21_small_256"):
+    def __init__(self, weights_path="../weights/midas_v21_small_256.pt", model_type="midas_v21_small_256"):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Loading MiDaS model from {weights_path} onto {self.device}...")
         self.model, self.transform, self.net_w, self.net_h = load_model(
