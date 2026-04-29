@@ -172,6 +172,11 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
         r, f = cap.read()
         if not r:
             return False, None
+            
+        # Force resize if camera hardware ignores our requested resolution
+        if f.shape[1] != cap_width or f.shape[0] != cap_height:
+            f = cv2.resize(f, (cap_width, cap_height), interpolation=cv2.INTER_LINEAR)
+            
         if moil_undistorter is not None and not no_anypoint:
             f = moil_undistorter.undistort(f)
             if anypoint_ctrl is not None and not headless:

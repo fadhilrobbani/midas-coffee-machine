@@ -47,8 +47,9 @@ class YoloDetector:
 
         boxes = []
         if self.is_ultralytics:
-            # Optimize: use imgsz=320 to speed up inference on CPU
-            results = self.model(detect_frame, verbose=False, imgsz=320)
+            # Use imgsz=416 to speed up CPU inference without shrinking the cup too much.
+            # You can set conf=0.25 to make it more sensitive.
+            results = self.model(detect_frame, verbose=False, imgsz=416, conf=0.25)
             if len(results) > 0:
                 for det in results[0].boxes:
                     cls_id = int(det.cls[0].item())

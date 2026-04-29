@@ -120,45 +120,16 @@ class MoilUndistorter:
                 f"Beberapa profil yang tersedia: {available} ..."
             )
 
-        # ── Ekstraksi Parameter Kamera ──────────────────────────────────────
-        cam_entry = _params[camera_name]
+        # ── Instansiasi Moildev Natively ─────────────────────────────────────────
+        # Sesuai request user: menggunakan modul Moildev secara native seperti di README.
+        # Kita lewati parameter manual dan biarkan Moildev membaca JSON langsung.
+        self._moil = _MoildevLib(json_path, camera_name)
         
-        # Simpan metadata asli sensor (untuk perhitungan focal length)
-        self._parameter5   = float(cam_entry.get("parameter5", 0.0))
-        self._calibRatio   = float(cam_entry.get("calibrationRatio", 1.0))
-        self._image_width  = int(cam_entry.get("imageWidth", 8000))
-        self._image_height = int(cam_entry.get("imageHeight", 6000))
-
-        # Hitung skala antara sensor asli dan resolusi stream aktual
-        scale_x = frame_width  / max(self._image_width,  1)
-        scale_y = frame_height / max(self._image_height, 1)
-        avg_scale = (scale_x + scale_y) / 2.0
-
-        # ── Instansiasi Moildev Natively (Scaled) ───────────────────────────
-        # DARIPADA: generate maps 8000x6000 lalu resize ke 640x480 (blur).
-        # SEBAIKNYA: inisiasi Moildev dengan parameter yang sudah di-scale.
-        # Maps akan langsung keluar di resolusi stream tanpa interpolation kedua.
+        # Ekstrak beberapa parameter penting untuk informasi/scaling jika perlu
+        self._parameter5   = self._moil.param_5
+        self._calibRatio   = self._moil._Moildev__calibration_ratio if hasattr(self._moil, "_Moildev__calibration_ratio") else 1.0
         
-        print(f"[MOIL] Native Init: {frame_width}x{frame_height} (scaled from {self._image_width}x{self._image_height})")
-        
-        self._moil = _MoildevLib(
-            camera_name      = camera_name,
-            camera_fov       = float(cam_entry.get("cameraFov", 220)),
-            sensor_width     = float(cam_entry.get("cameraSensorWidth", 1.0)),
-            sensor_height    = float(cam_entry.get("cameraSensorHeight", 1.0)),
-            icx              = float(cam_entry.get("iCx", 4000)) * scale_x,
-            icy              = float(cam_entry.get("iCy", 3000)) * scale_y,
-            ratio            = float(cam_entry.get("ratio", 1.0)),
-            image_width      = frame_width,
-            image_height     = frame_height,
-            calibration_ratio = float(cam_entry.get("calibrationRatio", 1.0)) * avg_scale,
-            parameter_0      = float(cam_entry.get("parameter0", 0.0)),
-            parameter_1      = float(cam_entry.get("parameter1", 0.0)),
-            parameter_2      = float(cam_entry.get("parameter2", 0.0)),
-            parameter_3      = float(cam_entry.get("parameter3", 0.0)),
-            parameter_4      = float(cam_entry.get("parameter4", 0.0)),
-            parameter_5      = float(cam_entry.get("parameter5", 0.0)),
-        )
+        print(f"[MOIL] Native Init: {self._moil.image_width}x{self._moil.image_height}")
 
         # Generate maps langsung di resolusi stream
         map_x_np, map_y_np = self._moil.maps_anypoint_mode2(pitch, yaw, roll, zoom)
@@ -298,8 +269,8 @@ class MoilUndistorter:
             Camera matrix K yang siap diinjeksikan ke aruco.camera_matrix.
         """
         # Hitung skala rasio antara resolusi streaming dan resolusi sensor JSON
-        scale_x = frame_width  / max(self._image_width,  1)
-        scale_y = frame_height / max(self._image_height, 1)
+        scale_x = frame_width  / max(self._moil.image_width,  1)
+        scale_y = frame_height / max(self._moil.image_height, 1)
         scale   = (scale_x + scale_y) / 2.0
 
         fl   = self.adjusted_focal_length * scale

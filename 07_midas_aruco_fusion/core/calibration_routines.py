@@ -38,7 +38,7 @@ def run_calib_1p_2p(get_frame, cap, aruco, yolo, midas, headless, true_height, t
             # If YOLO didn't run recently, clear old boxes
             boxes = None
 
-        aruco_results = aruco.detect(frame, roi_ratio=0.65)
+        aruco_results = aruco.detect(frame)
         z_calib = 0.0
         aruco_roi_c = None
         if aruco_results:
@@ -215,7 +215,7 @@ def run_calib_zgrid(get_frame, cap, aruco, yolo, midas, headless, true_height, n
         if last_midas_calib == 0.0 or (time.time() - last_midas_calib) > 1.0:
             boxes = None
 
-        aruco_results = aruco.detect(frame, roi_ratio=0.65)
+        aruco_results = aruco.detect(frame)
         z_calib   = 0.0
         aruco_roi_c = None
         if aruco_results:
@@ -352,7 +352,7 @@ def run_calib_bbox(get_frame, cap, aruco, yolo, midas, headless, true_height):
         if last_midas_calib == 0.0 or (time.time() - last_midas_calib) > 1.0:
             boxes = None
 
-        aruco_results = aruco.detect(frame, roi_ratio=0.65)
+        aruco_results = aruco.detect(frame)
         z_calib = 0.0; aruco_roi_c = None
         if aruco_results:
             best = aruco.get_best_distance(aruco_results)
@@ -483,21 +483,23 @@ def run_calib_geom(get_frame, cap, aruco, yolo, midas, headless, true_height, n_
         if (time.time() - last_det) > 1.0:
             boxes = None
 
-        aruco_results = aruco.detect(frame, roi_ratio=0.65)
+        aruco_results = aruco.detect(frame)
         z_calib = 0.0
         if aruco_results:
             best = aruco.get_best_distance(aruco_results)
             if best: z_calib = best["distance_cm"]
 
-        if (time.time() - last_det) > 0.15 and z_calib > 0 and phase == "sampling":
-            boxes = yolo.detect(frame, roi_ratio=0.65)
-            last_det = time.time()
-            if boxes:
+        # Run YOLO continuously for visual feedback
+        boxes = yolo.detect(frame, roi_ratio=0.65)
+        
+        if boxes and z_calib > 0 and phase == "sampling":
+            if (time.time() - last_det) > 0.15:
                 x1b, y1b, x2b, y2b = boxes[0]["bbox"]
                 bbox_h = float(y2b - y1b)
                 if bbox_h > 5:
                     current_g_z.append(z_calib)
                     current_g_h.append(bbox_h)
+                    last_det = time.time()
 
         if phase == "warmup" and elapsed >= CALIB_WARMUP_SEC:
             phase = "sampling"; calib_start = time.time(); elapsed = 0.0
@@ -595,7 +597,7 @@ def run_calib_bilateral(get_frame, cap, aruco, yolo, midas, headless, true_heigh
 
         if (time.time() - last_midas_calib) > 1.0: boxes = None
 
-        aruco_results = aruco.detect(frame, roi_ratio=0.65)
+        aruco_results = aruco.detect(frame)
         z_calib = 0.0
         aruco_roi_c = None
         if aruco_results:
@@ -747,7 +749,7 @@ def run_calib_analytic(get_frame, cap, aruco, yolo, midas, headless, true_height
 
         if (time.time() - last_det) > 1.0: boxes = None
 
-        aruco_results = aruco.detect(frame, roi_ratio=0.65)
+        aruco_results = aruco.detect(frame)
         z_calib = 0.0
         if aruco_results:
             best = aruco.get_best_distance(aruco_results)

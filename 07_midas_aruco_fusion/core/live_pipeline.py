@@ -40,7 +40,7 @@ def run_live_pipeline(get_frame, cap, aruco, yolo, midas, headless, calib_data, 
             stats_total_frames += 1
             h_frame, w_frame = frame.shape[:2]
 
-            aruco_results = aruco.detect(frame, roi_ratio=0.65)
+            aruco_results = aruco.detect(frame)
             if aruco_results:
                 best = aruco.get_best_distance(aruco_results)
                 if best:
@@ -54,8 +54,10 @@ def run_live_pipeline(get_frame, cap, aruco, yolo, midas, headless, calib_data, 
                         pad_y  = max(2, (y2 - y1) // 10)
                         aruco_roi = (x1 + pad_x, y1 + pad_y, x2 - pad_x, y2 - pad_y)
 
+            # Deteksi YOLO secara kontinu untuk visual feedback yang smooth (tanpa delay MiDaS)
+            boxes = yolo.detect(frame, roi_ratio=0.65)
+            
             if (now - last_midas_t) >= midas_interval and z_tray_live > 0 and aruco_roi:
-                boxes = yolo.detect(frame, roi_ratio=0.65)
                 if boxes:
                     # Sort left-to-right to keep cup ordering consistent
                     boxes = sorted(boxes, key=lambda b: b["bbox"][0])
