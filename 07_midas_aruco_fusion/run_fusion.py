@@ -96,8 +96,14 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  cap_width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cap_height)
-    # Aktifkan auto-exposure agar sensor bisa menyesuaikan pencahayaan
-    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)   # 3 = aperture priority (auto)
+    if args.manual_exposure > 0:
+        print(f"[CAM] Menggunakan Manual Exposure: {args.manual_exposure}")
+        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1) # 1 = Manual Mode di V4L2
+        cap.set(cv2.CAP_PROP_EXPOSURE, args.manual_exposure)
+    else:
+        # Aktifkan auto-exposure agar sensor bisa menyesuaikan pencahayaan
+        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)   # 3 = aperture priority (auto)
+
     cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)       # matikan autofocus (fisheye fixed-focus)
 
     actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -190,6 +196,12 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
                           f"--moil-yaw {moil_undistorter.yaw:.1f} "
                           f"--moil-roll {moil_undistorter.roll:.1f} "
                           f"--moil-zoom {moil_undistorter.zoom:.2f}")
+                
+                # SANGAT PENTING: Update camera matrix ArUco secara dinamis setiap frame!
+                # Jika user melakukan zoom in/out, focal length ekuivalen berubah.
+                # Ini mencegah jarak mendadak salah saat user melakukan scroll.
+                aruco.camera_matrix = moil_undistorter.build_aruco_camera_matrix(f.shape[1], f.shape[0])
+                
         return True, f
 
 
@@ -278,6 +290,8 @@ if __name__ == "__main__":
                     help="Zoom factor anypoint Moildev (default: 1.4)")
     ap.add_argument("--no-anypoint",       action="store_true",
                     help="Gunakan fisheye mode tapi TANPA remap anypoint (frame raw fisheye)")
+    ap.add_argument("--manual-exposure",   type=int,   default=0,
+                    help="Setel nilai manual exposure kamera (misal: 156). Default=0 (Auto-brightness)")
 
     args = ap.parse_args()
 

@@ -96,6 +96,8 @@ def generate_report():
         m_tray = depth_estimator.get_tray_depth(depth_map, tray_roi)
         
         if boxes and m_tray > 0:
+            bpx = [int(v) for v in boxes[0]['bbox']]
+            w_pixels = bpx[2] - bpx[0]
             m_rim = depth_estimator.get_rim_depth(depth_map, boxes[0]['bbox'])
             pred_z = calculate_z_rim_multivariate(m_rim, m_tray, true_z_tray, c1, c2, c3, c4)
             

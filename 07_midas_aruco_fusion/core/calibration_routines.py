@@ -53,7 +53,7 @@ def run_calib_1p_2p(get_frame, cap, aruco, yolo, midas, headless, true_height, t
                     aruco_roi_c = (x1c + 2, y1c + 2, x2c - 2, y2c - 2)
 
         if (time.time() - last_midas_calib) > 0.2 and z_calib > 0 and aruco_roi_c:
-            boxes = yolo.detect(frame, roi_ratio=0.65)
+            boxes = yolo.detect(frame)
             if boxes:
                 bbox_c = boxes[0]["bbox"]
                 dm = midas.process(frame)
@@ -230,7 +230,7 @@ def run_calib_zgrid(get_frame, cap, aruco, yolo, midas, headless, true_height, n
                     aruco_roi_c = (x1c+2, y1c+2, x2c-2, y2c-2)
 
         if (time.time() - last_midas_calib) > 0.2 and z_calib > 0 and aruco_roi_c and phase == "sampling":
-            boxes = yolo.detect(frame, roi_ratio=0.65)
+            boxes = yolo.detect(frame)
             if boxes:
                 bbox_c = boxes[0]["bbox"]
                 dm = midas.process(frame)
@@ -366,7 +366,7 @@ def run_calib_bbox(get_frame, cap, aruco, yolo, midas, headless, true_height):
                     aruco_roi_c = (x1c+2, y1c+2, x2c-2, y2c-2)
 
         if (time.time() - last_midas_calib) > 0.2 and z_calib > 0 and aruco_roi_c and phase == "sampling":
-            boxes = yolo.detect(frame, roi_ratio=0.65)
+            boxes = yolo.detect(frame)
             if boxes:
                 bbox_c = boxes[0]["bbox"]
                 dm = midas.process(frame)
@@ -490,7 +490,7 @@ def run_calib_geom(get_frame, cap, aruco, yolo, midas, headless, true_height, n_
             if best: z_calib = best["distance_cm"]
 
         # Run YOLO continuously for visual feedback
-        boxes = yolo.detect(frame, roi_ratio=0.65)
+        boxes = yolo.detect(frame)
         
         if boxes and z_calib > 0 and phase == "sampling":
             if (time.time() - last_det) > 0.15:
@@ -612,7 +612,7 @@ def run_calib_bilateral(get_frame, cap, aruco, yolo, midas, headless, true_heigh
                     aruco_roi_c = (x1c + 2, y1c + 2, x2c - 2, y2c - 2)
 
         if (time.time() - last_midas_calib) > 0.2 and z_calib > 0 and aruco_roi_c and phase.startswith("sample_"):
-            boxes = yolo.detect(frame, roi_ratio=0.65)
+            boxes = yolo.detect(frame)
             if boxes:
                 bbox_c = boxes[0]["bbox"]
                 dm = midas.process(frame)
@@ -756,7 +756,7 @@ def run_calib_analytic(get_frame, cap, aruco, yolo, midas, headless, true_height
             if best: z_calib = best["distance_cm"]
 
         if (time.time() - last_det) > 0.1 and z_calib > 0 and phase.startswith("sample_"):
-            boxes = yolo.detect(frame, roi_ratio=0.65)
+            boxes = yolo.detect(frame)
             last_det = time.time()
             if boxes:
                 x1b, y1b, x2b, y2b = boxes[0]["bbox"]

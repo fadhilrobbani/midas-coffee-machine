@@ -31,7 +31,7 @@ def run_live_pipeline(get_frame, cap, aruco, yolo, midas, headless, calib_data, 
 
     try:
         while True:
-            ret, frame = cap.read()
+            ret, frame = get_frame()
             if not ret:
                 time.sleep(0.1)
                 continue
@@ -55,7 +55,7 @@ def run_live_pipeline(get_frame, cap, aruco, yolo, midas, headless, calib_data, 
                         aruco_roi = (x1 + pad_x, y1 + pad_y, x2 - pad_x, y2 - pad_y)
 
             # Deteksi YOLO secara kontinu untuk visual feedback yang smooth (tanpa delay MiDaS)
-            boxes = yolo.detect(frame, roi_ratio=0.65)
+            boxes = yolo.detect(frame)
             
             if (now - last_midas_t) >= midas_interval and z_tray_live > 0 and aruco_roi:
                 if boxes:

@@ -385,11 +385,11 @@ class ArucoDetector:
         for r in results:
             corners = r["corners"].astype(int)
 
-            # Gambar kotak hijau di sekeliling marker
+            # Gambar kotak cyan di sekeliling marker agar beda dengan YOLO (yang warna hijau)
             for j in range(4):
                 pt1 = tuple(corners[j])
                 pt2 = tuple(corners[(j + 1) % 4])
-                cv2.line(annotated, pt1, pt2, (0, 255, 0), 4)
+                cv2.line(annotated, pt1, pt2, (255, 255, 0), 4)
 
             # Gambar axis 3D
             cv2.drawFrameAxes(annotated, self.camera_matrix, self.dist_coeffs,

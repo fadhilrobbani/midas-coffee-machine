@@ -273,7 +273,10 @@ class MoilUndistorter:
         scale_y = frame_height / max(self._moil.image_height, 1)
         scale   = (scale_x + scale_y) / 2.0
 
-        fl   = self.adjusted_focal_length * scale
+        # Focal length harus dikalikan dengan faktor zoom Anypoint!
+        # Jika gambar di-zoom, objek membesar, jadi focal length ekuivalen juga membesar.
+        fl   = self.adjusted_focal_length * scale * self.zoom
+        
         cx   = frame_width  / 2.0
         cy   = frame_height / 2.0
 
