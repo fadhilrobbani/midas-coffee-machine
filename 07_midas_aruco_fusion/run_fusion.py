@@ -151,6 +151,7 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
                 yaw          = moil_yaw,
                 roll         = moil_roll,
                 zoom         = moil_zoom,
+                mode         = getattr(args, "moil_mode", 2),
                 use_opencl   = True,
                 frame_width  = w,
                 frame_height = h,
@@ -288,6 +289,8 @@ if __name__ == "__main__":
                     help="Anypoint roll dalam derajat (default: 0)")
     ap.add_argument("--moil-zoom",         type=float, default=1.4,
                     help="Zoom factor anypoint Moildev (default: 1.4)")
+    ap.add_argument("--moil-mode",         type=int, default=2,
+                    help="Mode anypoint: 1 (Alpha/Beta) atau 2 (Pitch/Yaw/Roll) (default: 2)")
     ap.add_argument("--no-anypoint",       action="store_true",
                     help="Gunakan fisheye mode tapi TANPA remap anypoint (frame raw fisheye)")
     ap.add_argument("--manual-exposure",   type=int,   default=0,

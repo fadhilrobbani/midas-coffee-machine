@@ -59,6 +59,8 @@ class MoilUndistorter:
         Rotasi roll dalam derajat (default 0).
     zoom : float
         Faktor zoom anypoint (default 2).
+    mode : int
+        Mode Moildev (1 = Alpha/Beta, 2 = Pitch/Yaw/Roll). Default 2.
     use_opencl : bool
         Aktifkan akselerasi OpenCL jika tersedia (default True).
     frame_width : int
@@ -85,6 +87,7 @@ class MoilUndistorter:
         yaw: float = 0.0,
         roll: float = 0.0,
         zoom: float = 2.0,
+        mode: int = 2,
         use_opencl: bool = True,
         frame_width: int = 640,
         frame_height: int = 480,
@@ -95,6 +98,7 @@ class MoilUndistorter:
         self.yaw           = yaw
         self.roll          = roll
         self.zoom          = zoom
+        self.mode          = mode
         self.frame_width   = frame_width
         self.frame_height  = frame_height
         self.target_size   = target_size
@@ -132,7 +136,12 @@ class MoilUndistorter:
         print(f"[MOIL] Native Init: {self._moil.image_width}x{self._moil.image_height}")
 
         # Generate maps langsung di resolusi stream
-        map_x_np, map_y_np = self._moil.maps_anypoint_mode2(pitch, yaw, roll, zoom)
+        if self.mode == 1:
+            # pitch dipetakan ke alpha, yaw dipetakan ke beta untuk Mode 1
+            map_x_np, map_y_np = self._moil.maps_anypoint_mode1(pitch, yaw, zoom)
+        else:
+            map_x_np, map_y_np = self._moil.maps_anypoint_mode2(pitch, yaw, roll, zoom)
+            
         self._map_x_cpu = map_x_np.astype(np.float32)
         self._map_y_cpu = map_y_np.astype(np.float32)
 
@@ -189,15 +198,21 @@ class MoilUndistorter:
 
         Parameters yang None akan menggunakan nilai saat ini.
         """
-        if pitch is not None: self.pitch = max(-110.0, min(110.0, pitch))
-        if yaw   is not None: self.yaw   = max(-110.0, min(110.0, yaw))
-        if roll  is not None: self.roll  = max(-110.0, min(110.0, roll))
+        if pitch is not None: self.pitch = pitch
+        if yaw   is not None: self.yaw   = yaw
+        if roll  is not None: self.roll  = roll
         if zoom  is not None: self.zoom  = max(1.0,   min(20.0,  zoom))
 
         # Generate maps (sudah native resolusi stream karena init scaled)
-        map_x_np, map_y_np = self._moil.maps_anypoint_mode2(
-            self.pitch, self.yaw, self.roll, self.zoom
-        )
+        if self.mode == 1:
+            map_x_np, map_y_np = self._moil.maps_anypoint_mode1(
+                self.pitch, self.yaw, self.zoom
+            )
+        else:
+            map_x_np, map_y_np = self._moil.maps_anypoint_mode2(
+                self.pitch, self.yaw, self.roll, self.zoom
+            )
+            
         self._map_x_cpu = map_x_np.astype(np.float32)
         self._map_y_cpu = map_y_np.astype(np.float32)
         if self.opencl_active:
@@ -290,7 +305,7 @@ class MoilUndistorter:
 
     def __repr__(self) -> str:
         return (
-            f"MoilUndistorter(camera='{self.camera_name}', "
+            f"MoilUndistorter(camera='{self.camera_name}', mode={self.mode}, "
             f"pitch={self.pitch}, yaw={self.yaw}, roll={self.roll}, zoom={self.zoom}, "
             f"opencl={self.opencl_active})"
         )
