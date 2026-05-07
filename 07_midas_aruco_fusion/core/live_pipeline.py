@@ -124,10 +124,25 @@ def run_live_pipeline(get_frame, cap, aruco, yolo, midas, headless, calib_data, 
                     bs = sorted(_boxes_now, key=lambda b: b["bbox"][0])[:2]
                     cup_bboxes = [b["bbox"] for b in bs]
 
+                # ROI crop hanya untuk mode TANPA depth ratio (Geometric/Analytic).
+                # Untuk depth-based modes (1-4, 6), HARUS full-frame agar
+                # depth relatif MiDaS konsisten dengan saat kalibrasi.
+                # MiDaS = relative depth → crop mengubah konteks → ratio berubah!
+                combined_roi = None
+                if ctype_now in _ctype_no_midas:
+                    # Mode tanpa depth ratio: ROI crop aman, tingkatkan detail
+                    all_rois = list(cup_bboxes) + [aruco_roi]
+                    if all_rois:
+                        rx1 = min(r[0] for r in all_rois)
+                        ry1 = min(r[1] for r in all_rois)
+                        rx2 = max(r[2] for r in all_rois)
+                        ry2 = max(r[3] for r in all_rois)
+                        combined_roi = (rx1, ry1, rx2, ry2)
+
                 # Jalankan MiDaS (dengan lock untuk thread safety)
                 try:
                     with _midas_lock:
-                        depth_map = midas.process(frame)
+                        depth_map = midas.process(frame, roi_bbox=combined_roi)
                     stats_midas_runs += 1
                     depth_norm = cv2.normalize(depth_map, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
                     last_depth_norm = depth_norm

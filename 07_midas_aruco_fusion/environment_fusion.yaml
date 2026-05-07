@@ -15,6 +15,9 @@ dependencies:
     # MiDaS backbone dependencies
     - timm==0.6.12
     - einops==0.6.0
+    # ONNX Runtime (16× speedup vs PyTorch CPU default)
+    - onnx>=1.14.0
+    - onnxruntime>=1.16.0
     # YOLO (Ultralytics YOLOv8)
     - ultralytics>=8.0.0
     # Utilities

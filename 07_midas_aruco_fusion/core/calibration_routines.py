@@ -751,9 +751,25 @@ def run_calib_bilateral(get_frame, cap, aruco, yolo, midas, headless, true_heigh
                 phase = "warmup_c1"; calib_start = time.time()
 
     # Fit m(Z) and c(Z)
-    deg = min(len(Z_pts)-1, 2)
+    z_range = max(Z_pts) - min(Z_pts)
+    if z_range < 3.0:
+        print(f"[CALIB] ⚠️  WARNING: Z-range hanya {z_range:.1f}cm!")
+        print(f"           Posisi kamera terlalu dekat satu sama lain:")
+        print(f"           Z = {[f'{z:.1f}' for z in Z_pts]}")
+        print(f"           Untuk hasil akurat, gunakan z-range MINIMAL 5-10cm.")
+        print(f"           Contoh: posisikan kamera di ~15cm, ~20cm, ~25cm dari tray.")
+        print(f"[CALIB] → Menggunakan LINEAR fit (bukan quadratic) untuk stabilitas.")
+        deg = 1  # Linear = lebih stabil dari quadratic dengan data dekat
+    elif z_range < 5.0:
+        print(f"[CALIB] ⚠️  Z-range = {z_range:.1f}cm (disarankan > 5cm)")
+        deg = 1  # Tetap gunakan linear untuk safety
+    else:
+        deg = min(len(Z_pts)-1, 2)
+
     poly_m = np.polyfit(Z_pts, m_pts, deg=deg).tolist()
     poly_c = np.polyfit(Z_pts, c_pts, deg=deg).tolist()
+
+    print(f"[CALIB] Polynomial degree: {deg}, Z-range: {z_range:.1f}cm")
 
     cs.save_calibration_6p(poly_m, poly_c, Z_pts, true_height, true_height_2)
     calib_data = {"type": 6, "poly_m": poly_m, "poly_c": poly_c}
