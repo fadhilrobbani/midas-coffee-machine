@@ -144,7 +144,9 @@ def run_live_pipeline(get_frame, cap, aruco, yolo, midas, headless, calib_data, 
                     with _midas_lock:
                         depth_map = midas.process(frame, roi_bbox=combined_roi)
                     stats_midas_runs += 1
-                    depth_norm = cv2.normalize(depth_map, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                    # PiP visualization: bilateral-smoothed untuk tampilan lebih halus
+                    depth_viz = midas.get_smoothed_depth(depth_map)
+                    depth_norm = cv2.normalize(depth_viz, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
                     last_depth_norm = depth_norm
                 except Exception as _e:
                     print(f"[MIDAS] Inference error (skipped): {_e}")

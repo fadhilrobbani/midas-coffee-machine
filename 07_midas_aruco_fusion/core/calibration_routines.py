@@ -750,8 +750,37 @@ def run_calib_bilateral(get_frame, cap, aruco, yolo, midas, headless, true_heigh
             elif phase == "swap_z":
                 phase = "warmup_c1"; calib_start = time.time()
 
+    # ── Outlier Detection ─────────────────────────────────────────────────
+    # Jika salah satu posisi menghasilkan m/c yang sangat berbeda dari
+    # yang lain (e.g. MiDaS gagal sample rim di posisi tinggi), buang.
+    if len(m_pts) >= 3:
+        median_m = np.median(m_pts)
+        median_c = np.median(c_pts)
+        keep = []
+        for idx in range(len(m_pts)):
+            m_dev = abs(m_pts[idx] - median_m)
+            c_dev = abs(c_pts[idx] - median_c)
+            m_thresh = max(abs(median_m) * 5, 2.0)
+            c_thresh = max(abs(median_c) * 5, 2.0)
+            if m_dev > m_thresh or c_dev > c_thresh:
+                print(f"[CALIB] ⚠️  OUTLIER DETECTED at Z={Z_pts[idx]:.1f}cm: "
+                      f"m={m_pts[idx]:.3f} (median={median_m:.3f}), "
+                      f"c={c_pts[idx]:.3f} (median={median_c:.3f}) → DISCARDED")
+            else:
+                keep.append(idx)
+        if len(keep) < len(m_pts):
+            Z_pts = [Z_pts[i] for i in keep]
+            m_pts = [m_pts[i] for i in keep]
+            c_pts = [c_pts[i] for i in keep]
+            print(f"[CALIB] Remaining points after outlier removal: {len(Z_pts)}")
+
+    if len(Z_pts) < 2:
+        print("[CALIB] ❌ ERROR: Kurang dari 2 titik valid setelah outlier removal!")
+        print("         Kalibrasi ulang dengan posisi kamera yang lebih stabil.")
+        return None
+
     # Fit m(Z) and c(Z)
-    z_range = max(Z_pts) - min(Z_pts)
+    z_range = max(Z_pts) - min(Z_pts) if len(Z_pts) > 1 else 0
     if z_range < 3.0:
         print(f"[CALIB] ⚠️  WARNING: Z-range hanya {z_range:.1f}cm!")
         print(f"           Posisi kamera terlalu dekat satu sama lain:")
@@ -769,7 +798,13 @@ def run_calib_bilateral(get_frame, cap, aruco, yolo, midas, headless, true_heigh
     poly_m = np.polyfit(Z_pts, m_pts, deg=deg).tolist()
     poly_c = np.polyfit(Z_pts, c_pts, deg=deg).tolist()
 
+    # Sanity check: print setiap titik dan fitted value
     print(f"[CALIB] Polynomial degree: {deg}, Z-range: {z_range:.1f}cm")
+    for idx in range(len(Z_pts)):
+        m_fit = np.polyval(poly_m, Z_pts[idx])
+        c_fit = np.polyval(poly_c, Z_pts[idx])
+        print(f"  Z={Z_pts[idx]:.1f}cm → m_data={m_pts[idx]:.4f} (fit={m_fit:.4f}), "
+              f"c_data={c_pts[idx]:.4f} (fit={c_fit:.4f})")
 
     cs.save_calibration_6p(poly_m, poly_c, Z_pts, true_height, true_height_2)
     calib_data = {"type": 6, "poly_m": poly_m, "poly_c": poly_c}

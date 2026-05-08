@@ -291,8 +291,10 @@ class MidasDepthEstimator:
         else:
             prediction = self._infer_pytorch(img_input, img_size)
 
-        # ── Bilateral post-processing ────────────────────────────────────
-        prediction = self._bilateral_smooth(prediction.astype(np.float32))
+        # NOTE: Bilateral smoothing TIDAK diterapkan di sini.
+        # Bilateral blur rim/tray boundary → merusak get_rim_depth().
+        # Gunakan get_smoothed_depth() untuk PiP visualization saja.
+        prediction = prediction.astype(np.float32)
 
         # ── Paste kembali ke full-frame jika ROI mode ────────────────────
         if roi_bbox is not None:
@@ -308,6 +310,13 @@ class MidasDepthEstimator:
             self.prev_prediction = prediction
 
         return prediction.astype(np.float32)
+
+    def get_smoothed_depth(self, depth_map: np.ndarray) -> np.ndarray:
+        """
+        Bilateral-smoothed depth map untuk PiP visualization SAJA.
+        JANGAN gunakan untuk get_rim_depth() atau get_tray_depth().
+        """
+        return self._bilateral_smooth(depth_map)
 
     def get_standardized_depth(self, depth_map):
         """ 
