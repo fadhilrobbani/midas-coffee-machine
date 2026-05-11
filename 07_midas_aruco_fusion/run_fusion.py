@@ -284,6 +284,15 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
             f, led_on = normalize_lighting(f)
             _led_state["detected"] = led_on
 
+        # ── Black and White Mode ───────────────────────────────────────────
+        bw_active = False
+        if gui is not None:
+            bw_active = gui.is_bw_enabled()
+
+        if bw_active:
+            f_gray = cv2.cvtColor(f, cv2.COLOR_BGR2GRAY)
+            f = cv2.cvtColor(f_gray, cv2.COLOR_GRAY2BGR)
+
         if moil_undistorter is not None and not no_anypoint:
             f = moil_undistorter.undistort(f)
             if anypoint_ctrl is not None and not headless:

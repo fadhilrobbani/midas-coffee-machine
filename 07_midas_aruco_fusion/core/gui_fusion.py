@@ -20,6 +20,7 @@ class FusionGUI(Gtk.Window):
         # Cache boolean untuk normalize lighting — dibaca dari background thread
         # WAJIB Python bool biasa, bukan akses GTK widget (thread-unsafe → SIGABRT)
         self._normalize_enabled = False
+        self._bw_enabled = False
         self.key_queue = queue.Queue()
         
         self.connect("destroy", self.on_destroy)
@@ -157,6 +158,12 @@ class FusionGUI(Gtk.Window):
         # Update cache Python saat checkbox diubah (JANGAN baca widget dari background thread!)
         self.chk_normalize.connect("toggled", self._on_normalize_toggled)
         vb_a.pack_start(self.chk_normalize, False, False, 5)
+        
+        # Toggle Black & White Mode
+        self.chk_bw = Gtk.CheckButton(label="Enable Black & White Mode")
+        self.chk_bw.set_active(False)
+        self.chk_bw.connect("toggled", self._on_bw_toggled)
+        vb_a.pack_start(self.chk_bw, False, False, 5)
         
         self.lbl_setup_hint = Gtk.Label(label="")
         self.lbl_setup_hint.set_line_wrap(True)
@@ -351,6 +358,14 @@ class FusionGUI(Gtk.Window):
     def is_normalize_enabled(self):
         """Dibaca dari background thread — hanya kembalikan Python bool (BUKAN akses GTK widget)."""
         return self._normalize_enabled
+
+    def _on_bw_toggled(self, widget):
+        """Dijalankan di GTK main thread — update cache Python yang aman dibaca dari thread lain."""
+        self._bw_enabled = widget.get_active()
+
+    def is_bw_enabled(self):
+        """Dibaca dari background thread — hanya kembalikan Python bool."""
+        return self._bw_enabled
 
     def on_key_press(self, widget, event):
         # Convert GDK keyval to ascii
