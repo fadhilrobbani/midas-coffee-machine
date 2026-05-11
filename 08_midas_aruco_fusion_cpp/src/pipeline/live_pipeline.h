@@ -43,6 +43,10 @@ struct PipelineConfig {
     bool enable_moildev = true;
     bool enable_normalize = true;
     bool enable_depth = true;
+    int moil_mode = 2;
+    double moil_zoom = 1.0;
+    double target_cup_cm = 7.6;
+    int manual_exposure = 0;
 };
 
 struct PipelineMetrics {

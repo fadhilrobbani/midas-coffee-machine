@@ -154,6 +154,16 @@ endif()
 add_executable(fusion_app src/main.cpp)
 target_link_libraries(fusion_app PRIVATE fusion_core CLI11::CLI11)
 
+# ── Standalone Tools ───────────────────────────────────────────────────
+add_executable(record_moildev src/tools/record_moildev.cpp)
+target_link_libraries(record_moildev PRIVATE fusion_core CLI11::CLI11)
+
+add_executable(calibrate_fisheye src/tools/calibrate_fisheye.cpp)
+target_link_libraries(calibrate_fisheye PRIVATE fusion_core CLI11::CLI11)
+
+add_executable(compare_anypoint_modes src/tools/compare_anypoint_modes.cpp)
+target_link_libraries(compare_anypoint_modes PRIVATE fusion_core CLI11::CLI11)
+
 # ── Tests (GoogleTest + CTest) ─────────────────────────────────────────
 enable_testing()
 include(GoogleTest)

@@ -53,6 +53,16 @@ int main(int argc, char* argv[]) {
     app.add_option("-m,--mode", mode, "Run mode: live, calibrate")
        ->default_val("live");
     app.add_flag("--headless", headless, "Run without GUI (OpenCV display)");
+    app.add_flag("--fisheye", [&](int64_t) { config.enable_moildev = true; },
+                 "Enable Moildev (Fisheye) undistortion");
+    app.add_option("--moil-zoom", config.moil_zoom, "Initial Moildev Zoom")
+       ->default_val(1.0);
+    app.add_option("--moil-mode", config.moil_mode, "Moildev Mode (1 or 2)")
+       ->default_val(2);
+    app.add_option("--target-cup", config.target_cup_cm, "Target cup height in cm")
+       ->default_val(7.6);
+    app.add_option("--manual-exposure", config.manual_exposure, "V4L2 manual exposure value (0 = auto)")
+       ->default_val(0);
     app.add_flag("--no-moil", [&](int64_t) { config.enable_moildev = false; },
                  "Disable Moildev undistortion");
     app.add_flag("--no-depth", [&](int64_t) { config.enable_depth = false; },

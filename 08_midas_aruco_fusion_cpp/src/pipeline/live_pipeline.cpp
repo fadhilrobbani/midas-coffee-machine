@@ -42,7 +42,8 @@ bool LivePipeline::start() {
 
     // Initialize Moildev
     if (config_.enable_moildev && !config_.camera_params_path.empty()) {
-        moil_ = std::make_unique<MoilUndistorter>(config_.camera_params_path);
+        moil_ = std::make_unique<MoilUndistorter>(config_.camera_params_path, config_.moil_mode);
+        moil_->update_maps(0, 0, 0, config_.moil_zoom);
     }
 
     // Initialize Async MiDaS
@@ -84,9 +85,24 @@ void LivePipeline::camera_loop() {
     cap.set(cv::CAP_PROP_FRAME_WIDTH, config_.frame_width);
     cap.set(cv::CAP_PROP_FRAME_HEIGHT, config_.frame_height);
 
-    // Warmup
-    cv::Mat dummy;
-    for (int i = 0; i < 10; ++i) cap.read(dummy);
+    if (config_.manual_exposure > 0) {
+        cap.set(cv::CAP_PROP_AUTO_EXPOSURE, 1); // 1 = manual in V4L2
+        cap.set(cv::CAP_PROP_EXPOSURE, config_.manual_exposure);
+        std::cout << "[Init] Exposure locked to: " << config_.manual_exposure << "\n";
+    }
+
+    // Smart Warmup: wait for auto-exposure to settle (brightness > 15)
+    std::cout << "[Init] Camera warmup...\n";
+    cv::Mat dummy, gray;
+    for (int i = 0; i < 90; ++i) {
+        if (!cap.read(dummy) || dummy.empty()) continue;
+        cv::cvtColor(dummy, gray, cv::COLOR_BGR2GRAY);
+        cv::Scalar mean_val = cv::mean(gray);
+        if (mean_val[0] > 15.0) {
+            std::cout << "[Init] Warmup complete at iteration " << i << "\n";
+            break;
+        }
+    }
 
     std::cout << "[Camera] " << cap.get(cv::CAP_PROP_FRAME_WIDTH) << "x"
               << cap.get(cv::CAP_PROP_FRAME_HEIGHT) << "\n";
