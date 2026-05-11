@@ -1,0 +1,22 @@
+# Build artifacts
+build/
+cmake-build-*/
+
+# TDD test files — hanya untuk development, tidak di-push
+tests/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Compiled objects
+*.o
+*.a
+*.so
+*.dylib
+
+# OS
+.DS_Store
+Thumbs.db

@@ -89,7 +89,7 @@ def run_pipeline(camera_idx: int, headless: bool, calib_data: dict,
     print("[INIT] Loading ArucoDetector...")
     aruco = ArucoDetector(marker_size_cm=marker_size)
     print("[INIT] Loading YoloDetector...")
-    yolo_weights = os.path.join(ROOT_DIR, "weights", "cup_detection_v3_12_s_best.pt")
+    yolo_weights = os.path.join(ROOT_DIR, "weights", "best.pt")
     yolo  = YoloDetector(weights_path=yolo_weights)
     print("[INIT] Loading MidasDepthEstimator (this may take a while)...")
     midas_weights = os.path.join(ROOT_DIR, "weights", "midas_v21_small_256.pt")

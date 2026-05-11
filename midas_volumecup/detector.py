@@ -47,9 +47,9 @@ class YoloDetector:
 
         boxes = []
         if self.is_ultralytics:
-            # Use imgsz=416 to speed up CPU inference without shrinking the cup too much.
-            # You can set conf=0.25 to make it more sensitive.
-            results = self.model(detect_frame, verbose=False, imgsz=416, conf=0.25)
+            # Use imgsz=640 (default) to ensure bounding boxes are tight and accurate.
+            # Increased conf to 0.45 to prevent loose false positives.
+            results = self.model(detect_frame, verbose=False, imgsz=640, conf=0.45)
             if len(results) > 0:
                 for det in results[0].boxes:
                     cls_id = int(det.cls[0].item())
@@ -61,6 +61,16 @@ class YoloDetector:
                         # Shift back to original coordinates
                         x1, x2 = x1 + dw, x2 + dw
                         y1, y2 = y1 + dh, y2 + dh
+                        
+                        # Heuristic: shrink the bounding box by 8% to make it tighter around the rim
+                        # because the new model tends to predict loose boxes.
+                        w_b = x2 - x1
+                        h_b = y2 - y1
+                        x1 += int(w_b * 0.08)
+                        y1 += int(h_b * 0.08)
+                        x2 -= int(w_b * 0.08)
+                        y2 -= int(h_b * 0.08)
+                        
                         boxes.append({"bbox": (x1, y1, x2, y2), "conf": conf})
         else:
             results = self.model(detect_frame)
