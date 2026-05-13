@@ -42,7 +42,6 @@ private:
     int input_size_ = 640;
 
 #ifdef HAS_ONNXRUNTIME
-    Ort::Env env_;
     std::unique_ptr<Ort::Session> session_;
     Ort::AllocatorWithDefaultOptions allocator_;
     std::vector<const char*> input_names_;

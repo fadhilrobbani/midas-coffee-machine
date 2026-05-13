@@ -23,8 +23,8 @@ int main(int argc, char** argv) {
 
     CLI11_PARSE(app, argc, argv);
 
-    fusion::MoilUndistorter u1(moil_json, 1); // Mode 1
-    fusion::MoilUndistorter u2(moil_json, 2); // Mode 2
+    fusion::MoilUndistorter u1(moil_json, "", 1); // Mode 1
+    fusion::MoilUndistorter u2(moil_json, "", 2); // Mode 2
 
     u1.update_maps(pitch, yaw, 0, zoom);
     u2.update_maps(pitch, yaw, 0, zoom);

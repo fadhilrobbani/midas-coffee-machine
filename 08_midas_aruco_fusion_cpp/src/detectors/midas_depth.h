@@ -72,7 +72,6 @@ private:
     int input_height_ = 256;
 
 #ifdef HAS_ONNXRUNTIME
-    Ort::Env env_;
     std::unique_ptr<Ort::Session> session_;
     Ort::AllocatorWithDefaultOptions allocator_;
     std::vector<const char*> input_names_;

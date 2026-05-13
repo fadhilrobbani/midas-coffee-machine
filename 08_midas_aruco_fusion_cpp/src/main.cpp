@@ -37,6 +37,13 @@ int main(int argc, char* argv[]) {
     std::string mode = "live";
     bool headless = false;
 
+    // Hardcode defaults to match 07_midas_aruco_fusion
+    config.midas_model_path = "../../weights/midas_v21_small_256.onnx";
+    config.yolo_model_path = "../../weights/cup_detection_v3_12_s_best.onnx";
+    config.camera_params_path = "../../weights/moil/camera_parameters.json";
+    config.camera_name = "syue_7730v1_6";
+    config.enable_moildev = true;
+
     app.add_option("-c,--camera", config.camera_id, "Camera device ID")
        ->default_val(0);
     app.add_option("-W,--width", config.frame_width, "Frame width")
@@ -46,6 +53,7 @@ int main(int argc, char* argv[]) {
     app.add_option("--midas", config.midas_model_path, "MiDaS ONNX model path");
     app.add_option("--yolo", config.yolo_model_path, "YOLO ONNX model path");
     app.add_option("--moil", config.camera_params_path, "Moildev camera params JSON");
+    app.add_option("--moil-name", config.camera_name, "Camera profile name inside Moildev JSON");
     app.add_option("--calib", config.calibration_path, "Calibration JSON path")
        ->default_val("calibration.json");
     app.add_option("--marker-size", config.marker_size_cm, "ArUco marker size (cm)")
@@ -56,7 +64,7 @@ int main(int argc, char* argv[]) {
     app.add_flag("--fisheye", [&](int64_t) { config.enable_moildev = true; },
                  "Enable Moildev (Fisheye) undistortion");
     app.add_option("--moil-zoom", config.moil_zoom, "Initial Moildev Zoom")
-       ->default_val(1.0);
+       ->default_val(1.4);
     app.add_option("--moil-mode", config.moil_mode, "Moildev Mode (1 or 2)")
        ->default_val(2);
     app.add_option("--target-cup", config.target_cup_cm, "Target cup height in cm")
@@ -101,34 +109,49 @@ int main(int argc, char* argv[]) {
             };
             
             gui.on_smart_exposure = [&](double val) {
-                // Execute v4l2-ctl for hardware exposure via system call (like Python did)
-                std::string cmd = "v4l2-ctl -d /dev/video" + std::to_string(config.camera_id) + " -c exposure_absolute=" + std::to_string((int)(val * 1000));
-                int ret = system(cmd.c_str());
-                (void)ret;
+                // Map smart exposure (1.0 - 10.0) to raw values just like Python
+                double raw_exp = val * 1000.0;
+                double raw_gain = (val - 1.0) / 9.0 * 255.0;
+                double raw_bri = (val - 1.0) / 9.0 * 128.0 - 64.0;
+                pipeline.set_smart_exposure(raw_exp, raw_gain, raw_bri);
             };
 
             gui.on_generate_report = [&]() {
                 pipeline.reporter().generate_report("live_session");
                 gui.set_status("Report generated!");
             };
-            
-            gui.on_queue_key = [&](int keyval) {
-                // If the user wants to trigger screenshot/record/etc, handle it here if implemented in pipeline
-                // For now just stub
+            gui.on_snapshot = [&]() {
+                pipeline.save_screenshot("screenshots");
+                gui.set_status("Screenshot saved!");
             };
+            gui.on_start_calib = [&]() {
+                pipeline.toggle_recording();
+            };
+            gui.on_queue_key = [&](int) {};
 
-            // Timer to update GUI from pipeline
+            // Initialize AI models and ONNX Runtime safely before GTK starts its event loop
+            pipeline.init_models();
+
+            // Timer to update GUI from pipeline (~30 FPS)
+            bool pipeline_started = false;
             Glib::signal_timeout().connect([&]() -> bool {
+                if (!pipeline_started) {
+                    pipeline.start(); // Start background threads safely after GTK is ready
+                    pipeline_started = true;
+                }
                 auto frame = pipeline.get_display_frame();
                 if (!frame.empty()) gui.update_frame(frame);
-
                 auto m = pipeline.get_metrics();
-                gui.update_measurements(m.cup_height_cm, m.aruco_distance_cm,
-                                        m.diameter_cm, m.volume_ml);
+                gui.update_measurements(
+                    m.cup_height_cm[0], m.aruco_distance_cm,
+                    m.diameter_cm[0],   m.volume_ml[0]);
+                std::string st = std::string("ArUco:") + (m.aruco_found ? "OK" : "X")
+                               + " | YOLO:" + (m.cup_found[0] ? "OK" : "X")
+                               + " | LED:" + (m.led_on ? "ON" : "OFF");
+                gui.set_status(st);
                 return pipeline.is_running();
-            }, 33);  // ~30 FPS update
+            }, 33);
 
-            pipeline.start();
             gtk_app->run(gui);
             pipeline.stop();
             return 0;
@@ -136,6 +159,7 @@ int main(int argc, char* argv[]) {
 #endif
         // Headless / OpenCV display mode
         fusion::LivePipeline pipeline(config);
+        pipeline.init_models();
         pipeline.start();
 
         while (g_running && pipeline.is_running()) {
@@ -147,9 +171,9 @@ int main(int argc, char* argv[]) {
                 cv::imshow("MiDaS ArUco Fusion - OpenCV Fallback", display);
                 
                 int key = cv::waitKey(1);
-                if (key == 27 || key == 'q') {
-                    g_running = false;
-                }
+                if (key == 27 || key == 'q') g_running = false;
+                else if (key == 'r') pipeline.toggle_recording();
+                else if (key == 's') pipeline.save_screenshot("screenshots");
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(33));
         }
@@ -158,9 +182,10 @@ int main(int argc, char* argv[]) {
 
         auto m = pipeline.get_metrics();
         std::cout << "\n[Session Summary]\n";
-        std::cout << "  Total frames: " << m.frame_count << "\n";
-        std::cout << "  Last FPS: " << m.fps << "\n";
-        std::cout << "  Entries logged: " << pipeline.reporter().size() << "\n";
+        std::cout << "  Total frames : " << m.frame_count << "\n";
+        std::cout << "  Last FPS     : " << m.fps << "\n";
+        std::cout << "  Cup 1 height : " << m.cup_height_cm[0] << " cm\n";
+        std::cout << "  Cup 2 height : " << m.cup_height_cm[1] << " cm\n";
     }
 
     return 0;

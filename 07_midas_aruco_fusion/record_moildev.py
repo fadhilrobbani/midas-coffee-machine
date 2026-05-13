@@ -2,6 +2,7 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
 import cv2
+cv2.ocl.setUseOpenCL(False)  # Disable OpenCL for stability
 import os
 import sys
 import time
@@ -74,14 +75,15 @@ class MoildevRecordingWindow(Gtk.Window):
     def update_maps(self):
         if not self.moil:
             return
-        alpha = self.scale_alpha_adj.get_value()
-        beta  = self.scale_beta_adj.get_value()
+        pitch = self.scale_pitch_adj.get_value()
+        yaw   = self.scale_yaw_adj.get_value()
         zoom  = self.scale_zoom_adj.get_value()
-        params = (alpha, beta, zoom)
+        params = (pitch, yaw, zoom)
         if params != self.current_moil_params:
-            map_x, map_y = self.moil.maps_anypoint_mode1(alpha, beta, zoom)
-            self.map_x = cv2.UMat(map_x.astype(np.float32))
-            self.map_y = cv2.UMat(map_y.astype(np.float32))
+            map_x, map_y = self.moil.maps_anypoint_mode2(pitch, yaw, 0, zoom)
+            with self.lock:
+                self.map_x = map_x
+                self.map_y = map_y
             self.current_moil_params = params
 
     # ─── UI ──────────────────────────────────────────────────────────────────
@@ -133,7 +135,7 @@ class MoildevRecordingWindow(Gtk.Window):
         vbox_ctrl.pack_start(f_sys, False, False, 0)
 
         # ── Moildev Fisheye ──────────────────────────────────────────────────
-        f_moil = Gtk.Frame(label="Moildev Fisheye (Mode 1)")
+        f_moil = Gtk.Frame(label="Moildev Fisheye (Mode 2)")
         vb_m = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         self.entry_moil_cam = Gtk.Entry(text="syue_7730v1_6")
         vb_m.pack_start(Gtk.Label(label="Camera Name:"), 0, 0, 0)
@@ -143,26 +145,26 @@ class MoildevRecordingWindow(Gtk.Window):
         btn_reload.connect("clicked", self.on_reload_moil)
         vb_m.pack_start(btn_reload, False, False, 0)
 
-        self.scale_alpha_adj = Gtk.Adjustment(value=0, lower=0, upper=110, step_increment=1, page_increment=10, page_size=0)
-        self.scale_beta_adj  = Gtk.Adjustment(value=0, lower=0, upper=360, step_increment=1, page_increment=10, page_size=0)
+        self.scale_pitch_adj = Gtk.Adjustment(value=0, lower=-110, upper=110, step_increment=1, page_increment=10, page_size=0)
+        self.scale_yaw_adj   = Gtk.Adjustment(value=0, lower=-110, upper=110, step_increment=1, page_increment=10, page_size=0)
         self.scale_zoom_adj  = Gtk.Adjustment(value=4, lower=1, upper=20,  step_increment=1, page_increment=2,  page_size=0)
 
         def on_moil_scale_changed(widget):
             self.update_maps()
 
-        self.scale_alpha_adj.connect("value-changed", on_moil_scale_changed)
-        self.scale_beta_adj.connect("value-changed", on_moil_scale_changed)
+        self.scale_pitch_adj.connect("value-changed", on_moil_scale_changed)
+        self.scale_yaw_adj.connect("value-changed", on_moil_scale_changed)
         self.scale_zoom_adj.connect("value-changed", on_moil_scale_changed)
 
-        s_alpha = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.scale_alpha_adj)
-        s_alpha.set_digits(0); s_alpha.set_value_pos(Gtk.PositionType.RIGHT)
-        s_beta  = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.scale_beta_adj)
-        s_beta.set_digits(0);  s_beta.set_value_pos(Gtk.PositionType.RIGHT)
+        s_pitch = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.scale_pitch_adj)
+        s_pitch.set_digits(0); s_pitch.set_value_pos(Gtk.PositionType.RIGHT)
+        s_yaw   = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.scale_yaw_adj)
+        s_yaw.set_digits(0);   s_yaw.set_value_pos(Gtk.PositionType.RIGHT)
         s_zoom  = Gtk.Scale(orientation=Gtk.Orientation.HORIZONTAL, adjustment=self.scale_zoom_adj)
         s_zoom.set_digits(1);  s_zoom.set_value_pos(Gtk.PositionType.RIGHT)
 
-        vb_m.pack_start(Gtk.Label(label="Alpha:"), 0, 0, 0); vb_m.pack_start(s_alpha, 0, 0, 0)
-        vb_m.pack_start(Gtk.Label(label="Beta:"),  0, 0, 0); vb_m.pack_start(s_beta,  0, 0, 0)
+        vb_m.pack_start(Gtk.Label(label="Pitch:"), 0, 0, 0); vb_m.pack_start(s_pitch, 0, 0, 0)
+        vb_m.pack_start(Gtk.Label(label="Yaw:"),   0, 0, 0); vb_m.pack_start(s_yaw,   0, 0, 0)
         vb_m.pack_start(Gtk.Label(label="Zoom:"),  0, 0, 0); vb_m.pack_start(s_zoom,  0, 0, 0)
 
         f_moil.add(vb_m)
@@ -339,12 +341,14 @@ class MoildevRecordingWindow(Gtk.Window):
                     if ret2 and frame2 is not None:
                         frame = frame2
 
-                if self.moil and self.map_x is not None and self.map_y is not None:
-                    umat_frame   = cv2.UMat(frame)
-                    remapped_umat = cv2.remap(umat_frame, self.map_x, self.map_y,
+                with self.lock:
+                    map_x_copy = self.map_x
+                    map_y_copy = self.map_y
+
+                if self.moil and map_x_copy is not None and map_y_copy is not None:
+                    remapped_frame = cv2.remap(frame, map_x_copy, map_y_copy,
                                               cv2.INTER_LINEAR,
                                               borderMode=cv2.BORDER_CONSTANT, borderValue=0)
-                    remapped_frame = remapped_umat.get()
                 else:
                     remapped_frame = frame.copy()
 

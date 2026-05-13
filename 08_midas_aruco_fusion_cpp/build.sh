@@ -18,4 +18,9 @@ echo "🚀 Menjalankan aplikasi..."
 # (Opsional) Mengaktifkan font custom jika ada
 # export FONTCONFIG_FILE=../config/fonts.conf
 
-./fusion_app --camera 0
+./fusion_app --camera 0 \
+    --midas ../../weights/midas_v21_small_256.onnx \
+    --yolo ../../weights/cup_detection_v3_12_s_best.onnx \
+    --moil ../../weights/moil/camera_parameters.json \
+    --moil-name syue_7730v1_6\
+    --fisheye --marker-size 2.5

@@ -17,6 +17,7 @@ public:
     static constexpr double MAX_MOIL_ZOOM = 1.5;
 
     explicit MoilUndistorter(const std::string& camera_params_json,
+                             const std::string& camera_name = "",
                              int mode = 1);
 
     /// Undistort a frame using current maps
@@ -63,6 +64,7 @@ private:
 
     /// Load camera params from JSON
     void load_params(const std::string& json_path);
+    void load_params_with_name(const std::string& json_path, const std::string& camera_name);
 
     /// Generate undistortion maps via Moildev algorithm
     void generate_maps(double pitch, double yaw, double roll,

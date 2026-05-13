@@ -100,6 +100,7 @@ void run_calib_1p_2p(int type, double true_height,
                      KeyProvider get_key, const ArucoDetector& aruco,
                      const std::string& save_path,
                      int warmup_frames, int sample_frames) {
+    (void)get_key;
     std::cout << "[Calibrate] Type " << type << " — true_height=" << true_height << "cm\n";
 
     // Warmup
@@ -335,6 +336,7 @@ void run_calib_analytic(double true_height_1, double true_height_2,
     // Two equations, two unknowns (A, B)
     double denom = bh1 * true_height_2 - bh2 * true_height_1
                  + bh2 * bh1 * (z1 - z2) / (bh2 - bh1 + 1e-6);
+    (void)denom;
     double B = (bh1 * z1 - true_height_1 * bh1 - bh2 * z2 + true_height_2 * bh2)
              / (true_height_1 - true_height_2 + 1e-6) ;
     double A = bh1 * z1 - true_height_1 * (bh1 + B);

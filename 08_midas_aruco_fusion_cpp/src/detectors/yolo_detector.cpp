@@ -13,12 +13,13 @@
 
 namespace fusion {
 
+#ifdef HAS_ONNXRUNTIME
+    extern Ort::Env& get_ort_env();
+#endif
+
 YoloDetector::YoloDetector(const std::string& model_path, float conf_thresh,
                            float nms_thresh, int num_threads)
     : conf_thresh_(conf_thresh), nms_thresh_(nms_thresh)
-#ifdef HAS_ONNXRUNTIME
-    , env_(ORT_LOGGING_LEVEL_WARNING, "YOLO")
-#endif
 {
 #ifdef HAS_ONNXRUNTIME
     if (model_path.empty()) return;
@@ -26,7 +27,7 @@ YoloDetector::YoloDetector(const std::string& model_path, float conf_thresh,
         Ort::SessionOptions opts;
         opts.SetIntraOpNumThreads(num_threads);
         opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-        session_ = std::make_unique<Ort::Session>(env_, model_path.c_str(), opts);
+        session_ = std::make_unique<Ort::Session>(get_ort_env(), model_path.c_str(), opts);
 
         auto in_name = session_->GetInputNameAllocated(0, allocator_);
         auto out_name = session_->GetOutputNameAllocated(0, allocator_);

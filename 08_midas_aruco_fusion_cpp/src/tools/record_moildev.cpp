@@ -33,7 +33,7 @@ int main(int argc, char** argv) {
     // Ensure output directory exists (simple system call for now)
     system("mkdir -p recorded_videos");
 
-    fusion::MoilUndistorter undistorter(moil_json, 2); // Mode 2 by default
+    fusion::MoilUndistorter undistorter(moil_json, "", 2); // Mode 2 by default
     undistorter.update_maps(pitch, yaw, roll, zoom);
 
     cv::VideoCapture cap(camera_id, cv::CAP_V4L2);

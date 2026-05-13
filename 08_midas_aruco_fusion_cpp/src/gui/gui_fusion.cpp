@@ -292,6 +292,8 @@ void FusionGUI::set_status(const std::string& text) {
 
 void FusionGUI::update_measurements(double height_cm, double distance_cm,
                                      double diameter_cm, double volume_ml) {
+    (void)distance_cm;
+    (void)diameter_cm;
     std::ostringstream ss;
     ss << std::fixed << std::setprecision(1);
     ss << "Height: " << height_cm << " cm | Vol: " << volume_ml << " mL";

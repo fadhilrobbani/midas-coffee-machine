@@ -14,19 +14,23 @@
 
 namespace fusion {
 
+#ifdef HAS_ONNXRUNTIME
+    Ort::Env& get_ort_env() {
+        static Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "FusionEnv");
+        return env;
+    }
+#endif
+
 MidasDepthEstimator::MidasDepthEstimator(const std::string& model_path,
                                          int num_threads)
-#ifdef HAS_ONNXRUNTIME
-    : env_(ORT_LOGGING_LEVEL_WARNING, "MiDaS")
-#endif
 {
 #ifdef HAS_ONNXRUNTIME
     if (model_path.empty()) return;
     try {
         Ort::SessionOptions opts;
         opts.SetIntraOpNumThreads(num_threads);
-        opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-        session_ = std::make_unique<Ort::Session>(env_, model_path.c_str(), opts);
+        opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_BASIC);
+        session_ = std::make_unique<Ort::Session>(get_ort_env(), model_path.c_str(), opts);
 
         // Get input/output names
         auto in_name = session_->GetInputNameAllocated(0, allocator_);

@@ -136,6 +136,16 @@ target_link_libraries(fusion_core PUBLIC
     pthread
 )
 
+# Moildev Library (Static)
+set(MOILDEV_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../weights/moil")
+find_library(MOILDEV_LIB moildev PATHS ${MOILDEV_DIR} NO_DEFAULT_PATH)
+if(MOILDEV_LIB)
+    message(STATUS "Moildev Library: ${MOILDEV_LIB}")
+    target_link_libraries(fusion_core PUBLIC ${MOILDEV_LIB})
+else()
+    message(WARNING "Moildev static library not found at ${MOILDEV_DIR}")
+endif()
+
 if(HAS_GTKMM)
     target_include_directories(fusion_core PUBLIC ${GTKMM_INCLUDE_DIRS})
     target_link_libraries(fusion_core PUBLIC ${GTKMM_LIBRARIES})
