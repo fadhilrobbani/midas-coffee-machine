@@ -108,6 +108,7 @@ set(FUSION_CORE_SOURCES
     src/fisheye/anypoint_controller.cpp
     src/pipeline/async_midas.cpp
     src/pipeline/live_pipeline.cpp
+    src/volume/cup_volume_estimator.cpp    # [NEW] modular volume estimator
 )
 
 # Conditionally add GUI sources
@@ -126,6 +127,7 @@ target_include_directories(fusion_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/fisheye
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline
     ${CMAKE_CURRENT_SOURCE_DIR}/src/gui
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/volume    # [NEW] volume estimator module
     ${OpenCV_INCLUDE_DIRS}
 )
 
@@ -205,6 +207,59 @@ if(HAS_GTKMM)
 endif()
 add_fusion_test(test_calibration_routines  tests/calibration/test_calibration_routines.cpp)
 add_fusion_test(test_integration_pipeline  tests/pipeline/test_integration_pipeline.cpp)
+
+# [NEW] Volume Estimator Module
+add_fusion_test(test_cup_volume_estimator  tests/volume/test_cup_volume_estimator.cpp)
+
+# ── Optional: Standalone Shared Library (untuk proyek external) ───────────
+# PENTING: option() HARUS di luar if() agar cmake cache ter-set sebelum kondisi dievaluasi.
+# Build dengan: cmake .. -DBUILD_SHARED_VOLUME_LIB=ON
+option(BUILD_SHARED_VOLUME_LIB "Build libcup_volume.so for use in external C++ projects" OFF)
+
+if(BUILD_SHARED_VOLUME_LIB)
+    add_library(cup_volume SHARED
+        src/volume/cup_volume_estimator.cpp
+        src/math/volume_math.cpp
+        src/math/height_math.cpp
+        src/fisheye/moil_undistorter.cpp
+        src/fisheye/anypoint_controller.cpp
+        src/io/calibration_storage.cpp
+    )
+    target_include_directories(cup_volume PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/volume
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/math
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/fisheye
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/io
+        ${OpenCV_INCLUDE_DIRS}
+    )
+    # Gunakan pola linking yang sama dengan fusion_core
+    target_link_libraries(cup_volume PUBLIC
+        opencv_core opencv_imgproc opencv_videoio opencv_imgcodecs
+        nlohmann_json::nlohmann_json
+        pthread
+    )
+    # CATATAN: libmoildev.a TIDAK di-link ke .so karena tidak di-compile dengan -fPIC.
+    # Proyek pemanggilnya harus link libmoildev.a secara terpisah.
+    # Referensikan via: target_link_libraries(your_target PRIVATE /path/to/libmoildev.a)
+    if(HAS_ONNXRUNTIME)
+        target_include_directories(cup_volume PUBLIC ${ONNXRUNTIME_INCLUDE_DIR})
+        target_link_libraries(cup_volume PUBLIC ${ONNXRUNTIME_LIB})
+    endif()
+    install(TARGETS cup_volume
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+    )
+    install(FILES
+        src/volume/cup_volume_estimator.h
+        src/volume/volume_config.h
+        src/math/volume_math.h
+        src/math/height_math.h
+        DESTINATION include/fusion
+    )
+    message(STATUS "[cup_volume] Shared library target enabled → libcup_volume.so")
+endif()
+
 
 message(STATUS "")
 message(STATUS "╔══════════════════════════════════════════════╗")
