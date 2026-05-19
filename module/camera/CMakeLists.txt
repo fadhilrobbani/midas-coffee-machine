@@ -6,7 +6,7 @@ file(GLOB_RECURSE CAM_SOURCES
 # Buat library shared
 add_library(mod_camera SHARED ${CAM_SOURCES})
 
-target_compile_options(mod_detect PRIVATE
+target_compile_options(mod_camera PRIVATE
     -Wno-deprecated-enum-enum-conversion
 )
 

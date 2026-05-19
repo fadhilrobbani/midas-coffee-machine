@@ -116,7 +116,7 @@ static void draw_status_box(cv::Mat& frame,
 /* MODE 1 & 2: 1-Point / 2-Point calibration                                 */
 /*===========================================================================*/
 
-nlohmann::json CalibRoutines::run_calib_1p_2p(cv::VideoCapture& cap,
+nlohmann::json CalibRoutines::run_calib_1p_2p(Camera* cam, MoilUndistorter* moil, GuiFusion* gui,
                                                ArucoDetector& aruco,
                                                CalibrationStorage& storage,
                                                bool headless,
@@ -146,11 +146,12 @@ nlohmann::json CalibRoutines::run_calib_1p_2p(cv::VideoCapture& cap,
     if (!headless) cv::namedWindow(WIN, cv::WINDOW_NORMAL);
 
     while (phase != "done") {
-        cv::Mat frame;
-        if (!cap.read(frame) || frame.empty()) {
+        cv::Mat frame = cam->get_frame();
+        if (frame.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
+        if (moil) frame = moil->undistort(frame);
 
         double t       = now_sec();
         double elapsed = t - phase_start;
@@ -254,8 +255,9 @@ nlohmann::json CalibRoutines::run_calib_1p_2p(cv::VideoCapture& cap,
         }
 
         if (!headless) {
-            cv::imshow(WIN, disp);
-            int key = cv::waitKey(1) & 0xFF;
+            int key = -1;
+            if (gui) { gui->update_image(disp); key = gui->get_key(); }
+            else { cv::imshow(WIN, disp); key = cv::waitKey(1) & 0xFF; }
             if (key == 27) return nlohmann::json{};  // ESC — abort
             if (phase == "swap_wait" && key == ' ') {
                 phase = "warmup_2"; phase_start = now_sec();
@@ -305,7 +307,7 @@ nlohmann::json CalibRoutines::run_calib_1p_2p(cv::VideoCapture& cap,
 /* MODE 3: Z-Grid polynomial                                                  */
 /*===========================================================================*/
 
-nlohmann::json CalibRoutines::run_calib_zgrid(cv::VideoCapture& cap,
+nlohmann::json CalibRoutines::run_calib_zgrid(Camera* cam, MoilUndistorter* moil, GuiFusion* gui,
                                                ArucoDetector& aruco,
                                                CalibrationStorage& storage,
                                                bool headless,
@@ -333,11 +335,12 @@ nlohmann::json CalibRoutines::run_calib_zgrid(cv::VideoCapture& cap,
     std::vector<ArucoResult> last_aruco;
 
     while (pos_idx < n_positions || phase == "warmup") {
-        cv::Mat frame;
-        if (!cap.read(frame) || frame.empty()) {
+        cv::Mat frame = cam->get_frame();
+        if (frame.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
+        if (moil) frame = moil->undistort(frame);
 
         double t       = now_sec();
         double elapsed = t - phase_start;
@@ -420,8 +423,9 @@ nlohmann::json CalibRoutines::run_calib_zgrid(cv::VideoCapture& cap,
         }
 
         if (!headless) {
-            cv::imshow(WIN, disp);
-            int key = cv::waitKey(1) & 0xFF;
+            int key = -1;
+            if (gui) { gui->update_image(disp); key = gui->get_key(); }
+            else { cv::imshow(WIN, disp); key = cv::waitKey(1) & 0xFF; }
             if (key == 27) return nlohmann::json{};
             if (phase == "swap_wait" && key == ' ') {
                 phase = "warmup"; phase_start = now_sec();
@@ -509,7 +513,7 @@ nlohmann::json CalibRoutines::run_calib_zgrid(cv::VideoCapture& cap,
 /* MODE 4: BBox-area compensated                                              */
 /*===========================================================================*/
 
-nlohmann::json CalibRoutines::run_calib_bbox(cv::VideoCapture& cap,
+nlohmann::json CalibRoutines::run_calib_bbox(Camera* cam, MoilUndistorter* moil, GuiFusion* gui,
                                               ArucoDetector& aruco,
                                               CalibrationStorage& storage,
                                               bool headless,
@@ -537,11 +541,12 @@ nlohmann::json CalibRoutines::run_calib_bbox(cv::VideoCapture& cap,
     std::vector<ArucoResult> last_aruco;
 
     while (pos_idx < N_POS) {
-        cv::Mat frame;
-        if (!cap.read(frame) || frame.empty()) {
+        cv::Mat frame = cam->get_frame();
+        if (frame.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
+        if (moil) frame = moil->undistort(frame);
         double t = now_sec(), elapsed = t - phase_start;
 
         last_aruco = aruco.detect(frame);
@@ -643,7 +648,7 @@ nlohmann::json CalibRoutines::run_calib_bbox(cv::VideoCapture& cap,
 /* MODE 5: Geometric Z-Grid                                                   */
 /*===========================================================================*/
 
-nlohmann::json CalibRoutines::run_calib_geom(cv::VideoCapture& cap,
+nlohmann::json CalibRoutines::run_calib_geom(Camera* cam, MoilUndistorter* moil, GuiFusion* gui,
                                               ArucoDetector& aruco,
                                               CalibrationStorage& storage,
                                               bool headless,
@@ -672,11 +677,12 @@ nlohmann::json CalibRoutines::run_calib_geom(cv::VideoCapture& cap,
     std::vector<ArucoResult> last_aruco;
 
     while (phase != "done") {
-        cv::Mat frame;
-        if (!cap.read(frame) || frame.empty()) {
+        cv::Mat frame = cam->get_frame();
+        if (frame.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
+        if (moil) frame = moil->undistort(frame);
         double t = now_sec(), elapsed = t - phase_start;
 
         last_aruco = aruco.detect(frame);
@@ -796,7 +802,7 @@ nlohmann::json CalibRoutines::run_calib_geom(cv::VideoCapture& cap,
 /* MODE 6: Bilateral Z-Grid                                                   */
 /*===========================================================================*/
 
-nlohmann::json CalibRoutines::run_calib_bilateral(cv::VideoCapture& cap,
+nlohmann::json CalibRoutines::run_calib_bilateral(Camera* cam, MoilUndistorter* moil, GuiFusion* gui,
                                                    ArucoDetector& aruco,
                                                    CalibrationStorage& storage,
                                                    bool headless,
@@ -824,11 +830,12 @@ nlohmann::json CalibRoutines::run_calib_bilateral(cv::VideoCapture& cap,
     std::vector<ArucoResult> last_aruco;
 
     while (phase != "done") {
-        cv::Mat frame;
-        if (!cap.read(frame) || frame.empty()) {
+        cv::Mat frame = cam->get_frame();
+        if (frame.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
+        if (moil) frame = moil->undistort(frame);
         double t = now_sec(), elapsed = t - phase_start;
 
         last_aruco = aruco.detect(frame);
@@ -974,7 +981,7 @@ nlohmann::json CalibRoutines::run_calib_bilateral(cv::VideoCapture& cap,
 /* MODE 7: Universal Analytic Geometry                                        */
 /*===========================================================================*/
 
-nlohmann::json CalibRoutines::run_calib_analytic(cv::VideoCapture& cap,
+nlohmann::json CalibRoutines::run_calib_analytic(Camera* cam, MoilUndistorter* moil, GuiFusion* gui,
                                                   ArucoDetector& aruco,
                                                   CalibrationStorage& storage,
                                                   bool headless,
@@ -997,11 +1004,12 @@ nlohmann::json CalibRoutines::run_calib_analytic(cv::VideoCapture& cap,
     std::vector<ArucoResult> last_aruco;
 
     while (phase != "done") {
-        cv::Mat frame;
-        if (!cap.read(frame) || frame.empty()) {
+        cv::Mat frame = cam->get_frame();
+        if (frame.empty()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
         }
+        if (moil) frame = moil->undistort(frame);
         double t = now_sec(), elapsed = t - phase_start;
 
         last_aruco = aruco.detect(frame);

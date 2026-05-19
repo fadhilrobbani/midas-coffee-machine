@@ -45,7 +45,7 @@
 #include "core/calibration_routines.hpp"
 #include "core/calibration_storage.hpp"
 #include "core/live_pipeline.hpp"
-#include "core/moil_undistorter.hpp"
+#include <moil/moil_undistorter.h>
 #include "core/gui_fusion.hpp"
 #include "aruco_detector.hpp"
 
@@ -300,43 +300,57 @@ int main(int argc, char* argv[])
                 }
                 gui->enter_setup_mode(cname);
                 std::cout << "[SETUP] Waiting for user to configure camera and start " << cname << " calibration...\n";
-                gui->wait_for_calibration_ready();
-            }
+                
+                // Selama fase setup, tampilkan stream kamera di GUI agar bisa mengatur anypoint/zoom
+                while (!gui->is_calibration_ready() && gui->is_alive()) {
+                    cv::Mat frame = cam.get_frame();
+                    if (!frame.empty()) {
+                        if (args.fisheye && !args.no_anypoint && moil_undistorter) {
+                            frame = moil_undistorter->undistort(frame);
+                        }
+                        // Berikan overlay text "SETUP MODE"
+                        cv::putText(frame, "SETUP MODE: Adjust Camera & Press START CALIBRATION", cv::Point(20, 40),
+                                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 165, 255), 2);
+                        gui->update_image(frame);
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+                }
 
-            cv::VideoCapture cap_calib(args.camera);
-            cap_calib.set(cv::CAP_PROP_FRAME_WIDTH, 640);
-            cap_calib.set(cv::CAP_PROP_FRAME_HEIGHT, 480);
+                if (!gui->is_alive()) {
+                    std::exit(0);
+                }
+            }
 
             /* Run the selected calibration mode */
             switch (args.calibrate) {
                 case 1:
                 case 2:
                     calib_data = CalibRoutines::run_calib_1p_2p(
-                        cap_calib, aruco, storage, args.headless,
+                        &cam, (args.fisheye && !args.no_anypoint) ? moil_undistorter.get() : nullptr, gui.get(), aruco, storage, args.headless,
                         args.true_height, args.true_height_2, args.calibrate);
                     break;
                 case 3:
                     calib_data = CalibRoutines::run_calib_zgrid(
-                        cap_calib, aruco, storage, args.headless,
+                        &cam, (args.fisheye && !args.no_anypoint) ? moil_undistorter.get() : nullptr, gui.get(), aruco, storage, args.headless,
                         args.true_height, args.n_positions);
                     break;
                 case 4:
                     calib_data = CalibRoutines::run_calib_bbox(
-                        cap_calib, aruco, storage, args.headless, args.true_height);
+                        &cam, (args.fisheye && !args.no_anypoint) ? moil_undistorter.get() : nullptr, gui.get(), aruco, storage, args.headless, args.true_height);
                     break;
                 case 5:
                     calib_data = CalibRoutines::run_calib_geom(
-                        cap_calib, aruco, storage, args.headless,
+                        &cam, (args.fisheye && !args.no_anypoint) ? moil_undistorter.get() : nullptr, gui.get(), aruco, storage, args.headless,
                         args.true_height, args.n_positions);
                     break;
                 case 6:
                     calib_data = CalibRoutines::run_calib_bilateral(
-                        cap_calib, aruco, storage, args.headless,
+                        &cam, (args.fisheye && !args.no_anypoint) ? moil_undistorter.get() : nullptr, gui.get(), aruco, storage, args.headless,
                         args.true_height, args.true_height_2, args.n_positions);
                     break;
                 case 7:
                     calib_data = CalibRoutines::run_calib_analytic(
-                        cap_calib, aruco, storage, args.headless,
+                        &cam, (args.fisheye && !args.no_anypoint) ? moil_undistorter.get() : nullptr, gui.get(), aruco, storage, args.headless,
                         args.true_height, args.true_height_2);
                     break;
                 default:
@@ -344,7 +358,7 @@ int main(int argc, char* argv[])
                     if (gui) gui->queue_key(27);
                     return;
             }
-            cap_calib.release();
+            
 
             if (calib_data.empty() || calib_data.is_null()) {
                 std::cerr << "[CALIB] Calibration failed or aborted.\n";

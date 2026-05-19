@@ -44,7 +44,7 @@ public:
     inline static uint32_t DRPAI_MEM_OFFSET = 0x0000000;
 
     /* Detection parameters */
-    inline static constexpr int NUM_CLASS = 2;
+    inline static constexpr int NUM_CLASS = 1;
     inline static constexpr int NUM_BB = 1;
     inline static constexpr int NUM_INF_OUT_LAYER = 3;
     inline static constexpr int REG_MAX = 16;

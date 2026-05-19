@@ -132,11 +132,16 @@ target_link_libraries(midas_core
 add_subdirectory(module/detections)
 add_subdirectory(module/logger)
 add_subdirectory(module/camera)
+add_subdirectory(module/moil)
+add_subdirectory(module/cup_height)
+add_subdirectory(module/aruco)
 
 target_include_directories(midas_core PUBLIC
     ${CMAKE_SOURCE_DIR}/module/detections/include
     ${CMAKE_SOURCE_DIR}/module/logger/include
     ${CMAKE_SOURCE_DIR}/module/camera/include
+    ${CMAKE_SOURCE_DIR}/module/moil/include
+    ${CMAKE_SOURCE_DIR}/module/cup_height/include
     ${CMAKE_SOURCE_DIR}/module/detections/constants
     ${CMAKE_SOURCE_DIR}/module/detections/lib/yolo/include
 )
@@ -145,6 +150,8 @@ target_link_libraries(midas_core
     mod_detect
     mod_logger
     mod_camera
+    mod_moil
+    mod_cup_height
     ${TVM_LIBS}
 )
 
@@ -196,12 +203,10 @@ target_link_libraries(generate_marker ${OpenCV_LIBS})
 # =========================================================
 add_executable(run_fusion_cpp
     07_midas_aruco_fusion/run_fusion.cpp
-    07_midas_aruco_fusion/core/height_math.cpp
     07_midas_aruco_fusion/core/calibration_storage.cpp
     07_midas_aruco_fusion/core/calibration_routines.cpp
     07_midas_aruco_fusion/core/live_pipeline.cpp
     07_midas_aruco_fusion/core/session_reporter.cpp
-    07_midas_aruco_fusion/core/moil_undistorter.cpp
     07_midas_aruco_fusion/core/gui_fusion.cpp
     06_aruco_marker/aruco_detector.cpp
 )
@@ -214,6 +219,5 @@ target_include_directories(run_fusion_cpp PRIVATE
 target_link_libraries(run_fusion_cpp
     midas_core
     stdc++fs
-    ${CMAKE_SOURCE_DIR}/07_midas_aruco_fusion/lib/libmoildevren.a
     ${GTK3_LIBRARIES}
 )

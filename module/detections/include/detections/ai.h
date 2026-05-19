@@ -13,22 +13,22 @@
 #include <unistd.h>
 #endif
 
-// // =======================
-// // Include Face Modules
-// // =======================
-// #include <detections/face/arcface.h>
-// #include <detections/face/face_aligner.h>
+// =======================
+// Include Face Modules
+// =======================
+#include <detections/face/arcface.h>
+#include <detections/face/face_aligner.h>
 
-// #ifdef V2H
-// #include <detections/face/face_detector_v2h.h>
-// #else
-// #include <detections/face/face_detector.h>
-// #endif
+#ifdef V2H
+#include <detections/face/face_detector_v2h.h>
+#else
+#include <detections/face/face_detector.h>
+#endif
 
 // =======================
 // Include Cup Modules
 // =======================
-// #include <detections/cup/cup_size_estimator.h>
+#include <detections/cup/cup_size_estimator.h>
 
 #if defined(V2H) && (DRP_AI_TVM_RUNTIME == 1)
 #include <detections/cup/cup_detector_v2h.h>
@@ -77,9 +77,9 @@ public:
     // ===========================
 
 #ifdef V2H
-    // std::unique_ptr<FaceDetectorV2H> face_detector;       ///< Hardware-optimized detector (V2H)
-    // std::unique_ptr<MeraDrpRuntimeWrapper> face_runtime;  ///< MERA DRPAI runtime
-    // bool face_runtime_status = false;
+    std::unique_ptr<FaceDetectorV2H> face_detector;       ///< Hardware-optimized detector (V2H)
+    std::unique_ptr<MeraDrpRuntimeWrapper> face_runtime;  ///< MERA DRPAI runtime
+    bool face_runtime_status = false;
 #if (1) == DRP_AI_TVM_RUNTIME
     /**
      * @brief Lazy-load MiDaS hardware context.
@@ -124,10 +124,10 @@ public:
     std::unique_ptr<MidasEstimator> midas_estimator;   ///< TFLite MiDaS Depth Estimator
 #endif
 
-    // std::unique_ptr<FaceAligner> face_aligner;  ///< Face alignment engine
-    // std::unique_ptr<ArcFace> arcface;           ///< Face embedding model
+    std::unique_ptr<FaceAligner> face_aligner;  ///< Face alignment engine
+    std::unique_ptr<ArcFace>     arcface;        ///< Face embedding model
 
-    // std::unique_ptr<CupSizeEstimator> cup_estimator; ///< Cup size estimator
+    std::unique_ptr<CupSizeEstimator> cup_estimator; ///< Cup size estimator
 
     /**
      * @brief Destructor (default).

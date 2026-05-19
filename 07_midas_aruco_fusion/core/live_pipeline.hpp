@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "aruco_detector.hpp"
-#include "moil_undistorter.hpp"
+#include <moil/moil_undistorter.h>
 #include "gui_fusion.hpp"
 #include <camera/camera.h>
 

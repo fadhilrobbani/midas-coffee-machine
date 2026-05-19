@@ -75,26 +75,24 @@ cv::Mat Camera::get_frame() {
  * ========================= */
 void Camera::camera_loop() {
   while (running.load()) {
-    // Build GStreamer pipeline for the device
-    std::string index = std::to_string(std::get<int>(camera_source));
-    std::string device = "/dev/video" + index;
-    // std::string pipeline = "v4l2src device=" + device +
-    //                        " io-mode=0 do-timestamp=true "
-    //                        "!
-    //                        video/x-raw,format=YUY2,width=320,height=240,framerate=30/1
-    //                        "
-    //                        "! queue max-size-buffers=2 leaky=downstream "
-    //                        "! videoconvert ! video/x-raw,format=BGR "
-    //                        "! queue max-size-buffers=2 leaky=downstream "
-    //                        "! appsink max-buffers=1 drop=true sync=false
-    //                        wait-on-eos=false";
-    std::string pipeline = "v4l2src device=" + device +
-                           " io-mode=2 do-timestamp=true "
-                           "! image/jpeg,width=2592,height=1944,framerate=20/1 "
-                           "! jpegdec "
-                           "! videoconvert "
-                           "! video/x-raw,format=BGR "
-                           "! appsink max-buffers=1 drop=true sync=false";
+    // Build GStreamer pipeline.
+    // - int source  : build default JPEG fisheye pipeline (cup_cam)
+    // - string source: use directly as custom pipeline (face_cam or any other)
+    std::string pipeline;
+    if (camera_source.index() == 0) {
+      std::string index  = std::to_string(std::get<int>(camera_source));
+      std::string device = "/dev/video" + index;
+      pipeline = "v4l2src device=" + device +
+                 " io-mode=2 do-timestamp=true "
+                 "! image/jpeg,width=2592,height=1944,framerate=20/1 "
+                 "! jpegdec "
+                 "! videoconvert "
+                 "! video/x-raw,format=BGR "
+                 "! appsink max-buffers=1 drop=true sync=false";
+    } else {
+      // Custom pipeline string from config (e.g. face_cam with YUY2)
+      pipeline = std::get<std::string>(camera_source);
+    }
 
     bool opened = cap.open(pipeline, cv::CAP_GSTREAMER);
 

@@ -116,3 +116,9 @@ opencv_sync_tmp
 build-poky
 test-module-app
 .vscode
+
+smart-coffee-machine-linux/
+sample_app_v2h_gpl/
+module copy/
+07_midas_aruco_fusion/patch.py
+patch2.py

@@ -90,16 +90,16 @@ void CupDetectorV2H::R_Post_Proc(float *floatarr) {
       box_w = predictions[i][2];
       box_h = predictions[i][3];
 
-      printf("cx=%f cy=%f w=%f h=%f cls0=%f cls1=%f\n", predictions[i][0],
+      printf("cx=%f cy=%f w=%f h=%f cls0=%f\n", predictions[i][0],
              predictions[i][1], predictions[i][2], predictions[i][3],
-             predictions[i][4], predictions[i][5]);
+             predictions[i][4]);
 #if (2) <= CPU_DFL_SIGMOID_SKIP
       probability = dfl.sigmoid(probability);
 #endif
       // Box bb = {center_x, center_y, box_w, box_h};
       Box bb;
-      bb.x = center_x - box_w / 2;
-      bb.y = center_y - box_h / 2;
+      bb.x = center_x;
+      bb.y = center_y;
       bb.w = box_w;
       bb.h = box_h;
       d.box = bb;
@@ -119,17 +119,20 @@ void CupDetectorV2H::R_Post_Proc(float *floatarr) {
     if (det_buff[i].score == 0)
       continue;
 
-    /* Revert letterbox padding DRP-AI.
-     * Model expect 640x640, input is 640x480. PreRuntime menambahkan padding Y
-     * = 80 di atas dan bawah. Jadi koordinat output perlu dikurangi 80 di sumbu
-     * Y. */
-    float pad_y =
-        (float)(c::yolov8::MODEL_IN_H - DRPAI_IN_HEIGHT) / 2.0f; // 80.0
-    float pad_x = (float)(c::yolov8::MODEL_IN_W - DRPAI_IN_WIDTH) / 2.0f; // 0.0
+    /* Convert center coordinates back to top-left corner coordinates */
+    det_buff[i].box.x = det_buff[i].box.x - (det_buff[i].box.w / 2.0f);
+    det_buff[i].box.y = det_buff[i].box.y - (det_buff[i].box.h / 2.0f);
 
-    det_buff[i].box.x -= pad_x;
-    det_buff[i].box.y -= pad_y;
-    // Lebar dan tinggi tetap sama karena aspect ratio dipertahankan
+    /* No scaling or padding subtraction is needed.
+     * The DRP-AI PreRuntime processes the 640x480 image mapped to the top-left
+     * of the 640x640 model input. Thus, the model's output coordinates align perfectly.
+     */
+
+    /* Adjust box size: reduce 10px on each side */
+    det_buff[i].box.x += 10.0f;
+    det_buff[i].box.y += 10.0f;
+    det_buff[i].box.w -= 20.0f;
+    det_buff[i].box.h -= 20.0f;
   }
 
   /* Scale detection boxes dari MODEL coords ke resolusi frame asli (DRPAI_IN =
@@ -251,10 +254,26 @@ std::tuple<std::vector<Detection>> CupDetectorV2H::detect(cv::Mat &frame) {
       cv::cvtColor(frame_for_drp, frame_for_drp, cv::COLOR_GRAY2BGR);
     }
 
+    /* 2. Convert BGR -> YUYV (Manual Packing) */
+    cv::Mat yuv;
+    cv::cvtColor(frame_for_drp, yuv, cv::COLOR_BGR2YUV); // Y, U, V
+    
+    cv::Mat frame_yuyv(IMAGE_HEIGHT, IMAGE_WIDTH, CV_8UC2);
+    for (int r = 0; r < IMAGE_HEIGHT; ++r) {
+        const uint8_t* src = yuv.ptr<uint8_t>(r);
+        uint8_t* dst = frame_yuyv.ptr<uint8_t>(r);
+        for (int c = 0; c < IMAGE_WIDTH; c += 2) {
+            dst[c*2 + 0] = src[c*3 + 0]; // Y0
+            dst[c*2 + 1] = (src[c*3 + 1] + src[(c+1)*3 + 1]) / 2; // U
+            dst[c*2 + 2] = src[(c+1)*3 + 0]; // Y1
+            dst[c*2 + 3] = (src[c*3 + 2] + src[(c+1)*3 + 2]) / 2; // V
+        }
+    }
+
     /* 3. Salin ke DMA buffer */
-    size_t bgr_size = (size_t)IMAGE_WIDTH * IMAGE_HEIGHT * BGR_CHANNEL;
-    memcpy(drpai_buf->mem, frame_for_drp.data, bgr_size);
-    ret = buffer_flush_dmabuf(drpai_buf->idx, bgr_size);
+    size_t yuyv_size = (size_t)IMAGE_WIDTH * IMAGE_HEIGHT * 2;
+    memcpy(drpai_buf->mem, frame_yuyv.data, yuyv_size);
+    ret = buffer_flush_dmabuf(drpai_buf->idx, yuyv_size);
 
     if (ret < 0) {
       LOGR_ERROR("CupDetectorV2H: Buffer Flush Failed!");
@@ -263,7 +282,7 @@ std::tuple<std::vector<Detection>> CupDetectorV2H::detect(cv::Mat &frame) {
 
     in_param.pre_in_shape_w = IMAGE_WIDTH;
     in_param.pre_in_shape_h = IMAGE_HEIGHT;
-    in_param.pre_in_format = FORMAT_BGR;
+    in_param.pre_in_format = FORMAT_YUYV_422;
     in_param.pre_out_format = FORMAT_RGB;
 
     /* Reload YOLOv8 Pre-processing efficiently via AI singleton cache */

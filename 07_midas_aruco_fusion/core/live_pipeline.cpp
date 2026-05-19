@@ -7,9 +7,9 @@
 #include "live_pipeline.hpp"
 
 #include "calibration_routines.hpp"
-#include "height_math.hpp"
+#include <cup_height/height_math.h>
 #include "session_reporter.hpp"
-#include "moil_undistorter.hpp"
+#include <moil/moil_undistorter.h>
 #include "gui_fusion.hpp"
 
 #include <detections/ai.h>

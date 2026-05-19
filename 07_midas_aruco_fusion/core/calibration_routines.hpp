@@ -1,3 +1,6 @@
+#include <camera/camera.h>
+#include "gui_fusion.hpp"
+#include <moil/moil_undistorter.h>
 /*******************************************************************************
  * calibration_routines.hpp
  * Port of 07_midas_aruco_fusion/core/calibration_routines.py
@@ -51,7 +54,7 @@ bool get_cup_bbox(const std::vector<Detection>& detections,
 /* ──────────────────────────────────────────────────────────────────────── */
 /* Mode 1 & 2: 1-Point and 2-Point K-Factor / Linear calibration           */
 /* ──────────────────────────────────────────────────────────────────────── */
-nlohmann::json run_calib_1p_2p(cv::VideoCapture& cap,
+nlohmann::json run_calib_1p_2p(Camera* cam, MoilUndistorter* moil, GuiFusion* gui,
                                 ArucoDetector& aruco,
                                 CalibrationStorage& storage,
                                 bool headless,
@@ -60,7 +63,7 @@ nlohmann::json run_calib_1p_2p(cv::VideoCapture& cap,
                                 int calibrate_mode);
 
 /* Mode 3: Z-Grid polynomial */
-nlohmann::json run_calib_zgrid(cv::VideoCapture& cap,
+nlohmann::json run_calib_zgrid(Camera* cam, MoilUndistorter* moil, GuiFusion* gui,
                                 ArucoDetector& aruco,
                                 CalibrationStorage& storage,
                                 bool headless,
@@ -68,14 +71,14 @@ nlohmann::json run_calib_zgrid(cv::VideoCapture& cap,
                                 int n_positions);
 
 /* Mode 4: BBox-area compensated */
-nlohmann::json run_calib_bbox(cv::VideoCapture& cap,
+nlohmann::json run_calib_bbox(Camera* cam, MoilUndistorter* moil, GuiFusion* gui,
                                ArucoDetector& aruco,
                                CalibrationStorage& storage,
                                bool headless,
                                double true_height);
 
 /* Mode 5: Geometric Z-Grid */
-nlohmann::json run_calib_geom(cv::VideoCapture& cap,
+nlohmann::json run_calib_geom(Camera* cam, MoilUndistorter* moil, GuiFusion* gui,
                                ArucoDetector& aruco,
                                CalibrationStorage& storage,
                                bool headless,
@@ -83,7 +86,7 @@ nlohmann::json run_calib_geom(cv::VideoCapture& cap,
                                int n_positions);
 
 /* Mode 6: Bilateral Z-Grid */
-nlohmann::json run_calib_bilateral(cv::VideoCapture& cap,
+nlohmann::json run_calib_bilateral(Camera* cam, MoilUndistorter* moil, GuiFusion* gui,
                                     ArucoDetector& aruco,
                                     CalibrationStorage& storage,
                                     bool headless,
@@ -92,7 +95,7 @@ nlohmann::json run_calib_bilateral(cv::VideoCapture& cap,
                                     int n_positions);
 
 /* Mode 7: Universal Analytic Geometry */
-nlohmann::json run_calib_analytic(cv::VideoCapture& cap,
+nlohmann::json run_calib_analytic(Camera* cam, MoilUndistorter* moil, GuiFusion* gui,
                                    ArucoDetector& aruco,
                                    CalibrationStorage& storage,
                                    bool headless,
