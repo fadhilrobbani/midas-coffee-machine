@@ -34,12 +34,17 @@ if _MOIL_DIR not in sys.path:
 
 try:
     from Moildev import Moildev as _MoildevLib
-except ImportError as _e:
-    raise ImportError(
-        f"[MoilUndistorter] Gagal import Moildev dari {_MOIL_DIR}.\n"
-        f"Pastikan folder moildev/ sudah ada dan berisi Moildev.py.\n"
-        f"Error asli: {_e}"
-    )
+except ImportError:
+    # Fallback: coba import dari package moildev yang terinstal di conda env
+    try:
+        from moildev import Moildev as _MoildevLib
+    except ImportError as _e:
+        raise ImportError(
+            f"[MoilUndistorter] Gagal import Moildev.\n"
+            f"Dicoba dari folder lokal ({_MOIL_DIR}) dan dari package 'moildev'.\n"
+            f"Pastikan moildev terinstal (pip install moildev) atau folder moildev/ berisi Moildev.py.\n"
+            f"Error asli: {_e}"
+        )
 
 
 class MoilUndistorter:
@@ -413,6 +418,7 @@ class MoilUndistorter:
             mx = self._map_x
             my = self._map_y
             digi_z = self.digital_zoom  # snapshot nilai saat ini
+            current_roll = self.roll    # snapshot roll saat ini
 
         remapped = cv2.remap(
             frame_in,
@@ -425,6 +431,19 @@ class MoilUndistorter:
 
         if self.opencl_active:
             remapped = remapped.get()
+
+        # Bugfix: Library Moildev memiliki bug di clamp roll dan efek roll pada AnypointCar tidak selalu benar.
+        # Kita terapkan efek roll sebagai rotasi 2D pasca-remap (manual).
+        if current_roll != 0.0:
+            h, w = remapped.shape[:2]
+            center = (w / 2, h / 2)
+            M = cv2.getRotationMatrix2D(center, current_roll, 1.0)
+            remapped = cv2.warpAffine(
+                remapped, M, (w, h),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=(0, 0, 0)
+            )
 
         # Stage 2: Digital zoom via center-crop + resize
         remapped = self._digital_crop(remapped)

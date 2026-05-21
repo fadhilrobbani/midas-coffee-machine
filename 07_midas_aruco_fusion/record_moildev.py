@@ -16,9 +16,12 @@ if _MOIL_DIR not in sys.path:
 
 try:
     from Moildev import Moildev as MoildevLib
-except ImportError as e:
-    print(f"[ERROR] Gagal import Moildev: {e}")
-    sys.exit(1)
+except ImportError:
+    try:
+        from moildev import Moildev as MoildevLib
+    except ImportError as e:
+        print(f"[ERROR] Gagal import Moildev: {e}")
+        sys.exit(1)
 
 SAVE_DIR = os.path.join(_THIS_DIR, "recorded_videos")
 os.makedirs(SAVE_DIR, exist_ok=True)
